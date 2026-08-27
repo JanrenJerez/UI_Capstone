@@ -17,7 +17,7 @@ $isKiosk = isset($_GET['mode']) && $_GET['mode'] === 'kiosk';
     font-family: 'Segoe UI', sans-serif;
 ">
     <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-weight: 900; color: #ff0000; font-size: 1.4rem; letter-spacing: 1px;">
-    PROJECT<span style="color: white;">-E <img src="../assets/logo.jpg" alt="Logo" style="height: 2em; width: auto; vertical-align: middle; margin-left: 4px;"></span>
+    <a style="text-decoration: none !important; color: red !important;" href="/capstone/pos/dashboard.php">PROJECT -E<span style="color: white;"> <img src="../assets/logo.jpg" alt="Logo" style="height: 2em; width: auto; vertical-align: middle; margin-left: 4px;"></span></a>
 </div>
 
     <ul id="dynamicNav" style="list-style: none; display: flex; gap: 20px; margin: 0; padding: 0; align-items: center;">
