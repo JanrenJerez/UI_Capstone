@@ -1,13 +1,12 @@
 FROM php:8.2-apache
 
-# Install MySQL extension for PHP
 RUN docker-php-ext-install mysqli pdo pdo_mysql
-
-# Enable Apache mod_rewrite (if your app uses rewrite rules)
 RUN a2enmod rewrite
 
-# Copy project files into the web root
+# Copy everything, but point Apache DocumentRoot to the subfolder
 COPY . /var/www/html/
+ENV APACHE_DOCUMENT_ROOT /var/www/html/UI_Capstone
+RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf
+RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
 
-# Expose HTTP port
 EXPOSE 80
