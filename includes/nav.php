@@ -49,7 +49,7 @@ $isKiosk = isset($_GET['mode']) && $_GET['mode'] === 'kiosk';
 
         const isLoggedIn = sessionStorage.getItem('isAdminLoggedIn') === 'true';
 
-   // <li><a href="/capstone/pos/idcard.php">Qr Code Generator</a></li> id card gen. code
+   // <li><a href="/capstone/pos/idcard.php">Qr Code Generator</a></li> id card gen code di
 
         if (isLoggedIn) {
             navLinks.innerHTML = `
