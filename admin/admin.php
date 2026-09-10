@@ -4,7 +4,7 @@
 
 
     if (!isset($_SESSION['isAdminLoggedIn'])) {
-        header("Location: /../login.php");
+        header("Location: ../login.php");
         exit();
     }
 
@@ -22,9 +22,9 @@
     <head>
         <meta charset="UTF-8">
         <title>Admin Dashboard | Project E</title>
-        <link rel="stylesheet" href="css/style.css">
+        <link rel="stylesheet" href="../assets/style.css">
         <style>
-            body { background: #0f172a; color: white; font-family: sans-serif;background-image: url('./assets/gym.jpg');background-repeat: no-repeat;background-attachment: fixed;background-size: cover;background-position: center; }
+            body { background: #0f172a; color: white; font-family: sans-serif;background-image: url('../assets/gym.jpg');background-repeat: no-repeat;background-attachment: fixed;background-size: cover;background-position: center; }
             .container { max-width: 1100px; margin: 50px auto; padding: 20px; }
             h1 { color: #38bdf8; margin-bottom: 40px; }
             .admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 25px; }

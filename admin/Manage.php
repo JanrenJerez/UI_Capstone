@@ -3,7 +3,7 @@ session_start();
 include __DIR__ . '/../includes/db.php';
 
 if (!isset($_SESSION['isAdminLoggedIn'])) {
-    header("Location: index.php");
+    header("Location: ../login.php");
     exit();
 }
 
@@ -38,7 +38,7 @@ if (!$result) {
             margin: 0;
             background-image:
                 linear-gradient(rgba(10, 10, 10, 0.92), rgba(10, 10, 10, 0.92)),
-                url('./assets/gym.jpg');
+                url('../assets/gym.jpg');
             background-repeat: no-repeat;
             background-attachment: fixed;
             background-size: cover;

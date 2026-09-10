@@ -1,5 +1,6 @@
 <?php
 $isKiosk = isset($_GET['mode']) && $_GET['mode'] === 'kiosk';
+$base_path = (isset($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '/capstone') === 0) ? '/capstone' : '';
 ?>
 
 <?php if (!$isKiosk): ?>
@@ -17,7 +18,7 @@ $isKiosk = isset($_GET['mode']) && $_GET['mode'] === 'kiosk';
     font-family: 'Segoe UI', sans-serif;
 ">
     <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-weight: 900; color: #ff0000; font-size: 1.4rem; letter-spacing: 1px;">
-    <a style="text-decoration: none !important; color: red !important;" href="/capstone/pos/dashboard.php">PROJECT -E<span style="color: white;"> <img src="../assets/logo.jpg" alt="Logo" style="height: 2em; width: auto; vertical-align: middle; margin-left: 4px;"></span></a>
+    <a style="text-decoration: none !important; color: red !important;" href="<?php echo $base_path; ?>/pos/dashboard.php">PROJECT -E<span style="color: white;"> <img src="<?php echo $base_path; ?>/assets/logo.jpg" alt="Logo" style="height: 2em; width: auto; vertical-align: middle; margin-left: 4px;"></span></a>
 </div>
 
     <ul id="dynamicNav" style="list-style: none; display: flex; gap: 20px; margin: 0; padding: 0; align-items: center;">
@@ -48,22 +49,21 @@ $isKiosk = isset($_GET['mode']) && $_GET['mode'] === 'kiosk';
         <?php endif; ?>
 
         const isLoggedIn = sessionStorage.getItem('isAdminLoggedIn') === 'true';
-
-   // <li><a href="/capstone/pos/idcard.php">Qr Code Generator</a></li> id card gen code di
+        const basePath = '<?php echo $base_path; ?>';
 
         if (isLoggedIn) {
             navLinks.innerHTML = `
-                <li><a href="/capstone/pos/dashboard.php">Dashboard</a></li>
-                <li><a href="/capstone/admin/Manage.php" style="font-weight: bold">MANAGE MEMBERS</a></li>
-                <li><a href="/capstone/admin/register.php">Register</a></li>
-                <li><a href="/capstone/pos/sales.php">Products</a></li>
-                <li><a href="/capstone/admin/staff.php">Staff</a></li>
-                <li><a href="/capstone/logout.php" style="color: #ef4444; font-weight: bold;">Log out</a></li>
+                <li><a href="${basePath}/pos/dashboard.php">Dashboard</a></li>
+                <li><a href="${basePath}/admin/Manage.php" style="font-weight: bold">MANAGE MEMBERS</a></li>
+                <li><a href="${basePath}/admin/register.php">Register</a></li>
+                <li><a href="${basePath}/pos/sales.php">Products</a></li>
+                <li><a href="${basePath}/admin/staff.php">Staff</a></li>
+                <li><a href="${basePath}/logout.php" style="color: #ef4444; font-weight: bold;">Log out</a></li>
             `;
         } else {
             navLinks.innerHTML = `
-                <li><a href="/capstone/index.php">Home</a></li>
-                <li><a href="/capstone/login.php">Admin Login</a></li>
+                <li><a href="${basePath}/index.php">Home</a></li>
+                <li><a href="${basePath}/login.php">Admin Login</a></li>
             `;
         }
     }

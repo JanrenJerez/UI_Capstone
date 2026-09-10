@@ -63,7 +63,7 @@ if (!$member) { die("Member not found."); }
                 <span><?php echo date('M d, Y', strtotime($member['created_at'] ?? 'now')); ?></span>
             </div>
         </div>
-        <a href="edit_members.php?id=<?php echo $member['id']; ?>" class="btn-update" style="display:block; text-decoration:none; margin-top:20px; background:#38bdf8; color:#0f172a; padding:10px; border-radius:8px; font-weight:bold;">Update Membership</a>
+        <a href="../admin/edit_members.php?id=<?php echo $member['id']; ?>" class="btn-update" style="display:block; text-decoration:none; margin-top:20px; background:#38bdf8; color:#0f172a; padding:10px; border-radius:8px; font-weight:bold;">Update Membership</a>
     </div>
 
     <div class="history-card">

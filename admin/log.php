@@ -1,10 +1,10 @@
 <?php
 session_start();
-include __DIR__ . '/includes/db.php';
-include __DIR__ . '/includes/nav.php'; 
+include __DIR__ . '/../includes/db.php';
+include __DIR__ . '/../includes/nav.php'; 
 
 if (!isset($_SESSION['isAdminLoggedIn'])) {
-    header("Location: login.php");
+    header("Location: ../login.php");
     exit();
 }
 

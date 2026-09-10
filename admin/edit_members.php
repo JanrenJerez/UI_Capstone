@@ -4,7 +4,7 @@ include __DIR__ . '/../includes/db.php';
 include __DIR__ . '/../includes/nav.php';
 
 if (!isset($_GET['id'])) { 
-    header("Location: manage.php"); 
+    header("Location: Manage.php"); 
     exit(); 
 }
 
@@ -23,7 +23,7 @@ if (isset($_POST['update'])) {
     $sql = "UPDATE members SET name='$username', expiry_date='$expires_at' WHERE id='$id'";
     
     if ($conn->query($sql)) {
-        echo "<script>alert('Update Successful'); window.location='manage.php';</script>";
+        echo "<script>alert('Update Successful'); window.location='Manage.php';</script>";
     } else {
         echo "Error: " . $conn->error;
     }
@@ -35,7 +35,7 @@ if (isset($_POST['update'])) {
 <head>
     <meta charset="UTF-8">
     <title>Edit Member | Project E</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="../assets/style.css">
     <style>
         body { background: #0f172a; font-family: 'Segoe UI', sans-serif; color: white; }
         .edit-card { background: white; padding: 30px; border-radius: 15px; max-width: 450px; margin: 50px auto; color: #1e293b; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
@@ -63,7 +63,7 @@ if (isset($_POST['update'])) {
         <input type="text" value="#<?php echo $member['id']; ?>" disabled style="background: #f8fafc; color: #94a3b8;">
 
         <button type="submit" name="update" class="btn-update">Save Changes</button>
-        <a href="manage.php" class="back-link">Cancel and Go Back</a>
+        <a href="Manage.php" class="back-link">Cancel and Go Back</a>
     </form>
 </div>
 
