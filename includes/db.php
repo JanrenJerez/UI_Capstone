@@ -1,5 +1,10 @@
 <?php
-$db_file = __DIR__ . '/../database/gym.db';
+// In the packaged app, Electron passes USER_DATA_PATH so the DB lives in a writable,
+// reinstall-safe folder. In dev, fall back to the bundled database/gym.db.
+$userDataPath = getenv('USER_DATA_PATH');
+$db_file = $userDataPath
+    ? $userDataPath . DIRECTORY_SEPARATOR . 'gym.db'
+    : __DIR__ . '/../database/gym.db';
 
 try {
     $pdo = new PDO("sqlite:" . $db_file);

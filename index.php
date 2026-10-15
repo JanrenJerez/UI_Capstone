@@ -1,7 +1,7 @@
 <?php
 session_start();
 date_default_timezone_set('Asia/Manila');
-require_once __DIR__ . '\includes\db.php';
+require_once __DIR__ . '/includes/db.php';
 
 if (isset($_POST['delete_transaction_id'])) {
     $delId = intval($_POST['delete_transaction_id']);
@@ -146,7 +146,7 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard | Project-E</title>
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="assets/vendor/html5-qrcode.min.js"></script>
     <style>
         * { box-sizing: border-box; }
         body {

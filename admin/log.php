@@ -3,13 +3,13 @@ session_start();
 include __DIR__ . '/../includes/db.php';
 
 if (!isset($_SESSION['isAdminLoggedIn'])) {
-    header("Location: login.php");
+    header("Location: ../index.php");
     exit();
 }
 
 $id = $_GET['id'] ?? null;
 if (!$id) {
-    header("Location: members.php");
+    header("Location: manage.php");
     exit();
 }
 

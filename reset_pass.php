@@ -7,7 +7,7 @@ $success = "";
 
 // Ensure the user went through the forgot_password.php step first
 if (!isset($_SESSION['reset_username'])) {
-    header("Location: forgot_password.php");
+    header("Location: forgotpass.php");
     exit();
 }
 
@@ -46,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_password'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Project-E - New Password</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="assets/style.css">
     <style>
         * { box-sizing: border-box; }
 

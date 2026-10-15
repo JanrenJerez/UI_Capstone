@@ -22,6 +22,12 @@
     "files": [
       "main.js",
       "index.php",
+      "forgotpass.php",
+      "reset_pass.php",
+      "logout.php",
+      "member_profile.php",
+      "uploads.php",
+      "admin/**/*",
       "pos/**/*",
       "includes/**/*",
       "assets/**/*",
@@ -33,19 +39,26 @@
       {
         "from": "resources/php/",
         "to": "php",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "assets/logo.ico"
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "icon": "assets/logo.icns"
     },
     "directories": {
       "output": "dist"
-    }
+    },
+    "asar": false
   }
 }

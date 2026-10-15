@@ -32,7 +32,7 @@ try {
             exit;
         }
 
-        $log_stmt = $conn->prepare("INSERT INTO attendance (member_id, scan_time) VALUES (?, NOW())");
+        $log_stmt = $conn->prepare("INSERT INTO attendance (member_id, scan_time) VALUES (?, datetime('now', 'localtime'))");
         
         if ($log_stmt->execute([$member_id])) {
             echo json_encode([

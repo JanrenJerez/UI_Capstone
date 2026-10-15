@@ -1,7 +1,7 @@
 <?php
 session_start();
-include __DIR__ . '/../includes/db.php';
-include __DIR__ . '/../includes/nav.php'; 
+include __DIR__ . '/includes/db.php';
+include __DIR__ . '/includes/nav.php'; 
 
 if (!isset($_GET['id'])) {
     header("Location: dashboard.php");
@@ -27,8 +27,8 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title><?php echo htmlspecialchars($member['username'] ?? ''); ?> | Profile</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <title><?php echo htmlspecialchars($member['name'] ?? ''); ?> | Profile</title>
+    <script src="assets/vendor/qrcode.min.js"></script>
     <style>
         body { background: #0f172a; color: white; font-family: 'Segoe UI', sans-serif; margin: 0; }
         .profile-container { max-width: 900px; margin: 50px auto; display: grid; grid-template-columns: 1fr 2fr; gap: 20px; padding: 0 20px; }
@@ -49,11 +49,11 @@ try {
 <div class="profile-container">
     <div class="glass-card">
         <div id="qrcode" style="display: flex; justify-content: center; margin-bottom: 20px;"></div>
-        <h2 style="margin: 10px 0;"><?php echo htmlspecialchars($member['username'] ?? ''); ?></h2>
+        <h2 style="margin: 10px 0;"><?php echo htmlspecialchars($member['name'] ?? ''); ?></h2>
         <p style="color: #64748b; font-size: 0.9rem;">ID: <?php echo htmlspecialchars($member['id'] ?? ''); ?></p>
         
         <?php 
-        $isExpired = strtotime($member['expires_at']) < time();
+        $isExpired = strtotime($member['expiry_date']) < time();
         $statusClass = $isExpired ? 'badge-expired' : 'badge-active';
         $statusText = $isExpired ? 'EXPIRED' : 'ACTIVE';
         ?>
@@ -62,7 +62,7 @@ try {
         <div class="stats-grid">
             <div class="stat-box">
                 <small>Expiry Date</small>
-                <span><?php echo date('M d, Y', strtotime($member['expires_at'])); ?></span>
+                <span><?php echo date('M d, Y', strtotime($member['expiry_date'])); ?></span>
             </div>
             <div class="stat-box">
                 <small>Join Date</small>

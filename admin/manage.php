@@ -153,7 +153,7 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
             margin: 0;
             background-image:
                 linear-gradient(rgba(10, 10, 10, 0.92), rgba(10, 10, 10, 0.92)),
-                url('./assets/gym.jpg');
+                url('../assets/gym.jpg');
             background-repeat: no-repeat;
             background-attachment: fixed;
             background-size: cover;

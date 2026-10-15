@@ -7,6 +7,7 @@ if (!isset($conn) && isset($pdo)) {
 }
 
 include __DIR__ . '/../includes/exporthelper.php';
+include __DIR__ . '/../includes/upload_paths.php';
 
 $stmt = $conn->query("PRAGMA table_info(sales)");
 $columns = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -79,8 +80,7 @@ if (isset($_POST['add_product'])) {
     $image_path = ""; 
 
     if (isset($_FILES['pimg']) && $_FILES['pimg']['error'] === 0) {
-        $userDataPath = getenv('USER_DATA_PATH');
-        $target_dir = $userDataPath ? $userDataPath . '/assets/' : '../assets/';
+        $target_dir = upload_dir();
         
         if (!is_dir($target_dir)) {
             mkdir($target_dir, 0777, true);
@@ -91,7 +91,7 @@ if (isset($_POST['add_product'])) {
         $target_file = $target_dir . $new_filename;
 
         if (move_uploaded_file($_FILES["pimg"]["tmp_name"], $target_file)) {
-            $image_path = $target_file;
+            $image_path = upload_url($new_filename);
         }
     }
 
@@ -109,8 +109,7 @@ if (isset($_POST['update_product'])) {
     $stock = $_POST['edit_stock'];
 
     if (isset($_FILES['edit_img']) && $_FILES['edit_img']['error'] === 0) {
-        $userDataPath = getenv('USER_DATA_PATH');
-        $target_dir = $userDataPath ? $userDataPath . '/assets/' : '../assets/';
+        $target_dir = upload_dir();
         
         if (!is_dir($target_dir)) {
             mkdir($target_dir, 0777, true);
@@ -125,11 +124,12 @@ if (isset($_POST['update_product'])) {
         $target_file = $target_dir . $new_filename;
 
         if (move_uploaded_file($_FILES["edit_img"]["tmp_name"], $target_file)) {
-            if ($old_img && !empty($old_img['image_url']) && file_exists($old_img['image_url'])) {
-                @unlink($old_img['image_url']);
+            $old_path = $old_img ? upload_disk_path($old_img['image_url']) : null;
+            if ($old_path && file_exists($old_path)) {
+                @unlink($old_path);
             }
             $stmt = $conn->prepare("UPDATE products SET name = ?, price = ?, stock = ?, image_url = ? WHERE id = ?");
-            $stmt->execute([$name, $price, $stock, $target_file, $prod_id]);
+            $stmt->execute([$name, $price, $stock, upload_url($new_filename), $prod_id]);
         }
     } else {
         $stmt = $conn->prepare("UPDATE products SET name = ?, price = ?, stock = ? WHERE id = ?");
@@ -147,8 +147,9 @@ if (isset($_POST['delete_product'])) {
     $stmt->execute([$delete_id]);
     $img_row = $stmt->fetch(PDO::FETCH_ASSOC);
     
-    if ($img_row && !empty($img_row['image_url']) && file_exists($img_row['image_url'])) {
-        @unlink($img_row['image_url']);
+    $img_path = $img_row ? upload_disk_path($img_row['image_url']) : null;
+    if ($img_path && file_exists($img_path)) {
+        @unlink($img_path);
     }
 
     $del = $conn->prepare("DELETE FROM products WHERE id = ?");
@@ -339,7 +340,7 @@ if (!$history_result) {
                             <input type="hidden" name="delete_id" value="<?php echo $p['id']; ?>">
                             <button type="submit" name="delete_product" class="delete-btn" onclick="event.stopPropagation();">&times;</button>
                         </form>
-                        <img src="<?php echo !empty($p['image_url']) ? $p['image_url'] : 'https://via.placeholder.com/150'; ?>" alt="product">
+                        <img src="<?php echo htmlspecialchars(upload_src($p['image_url'] ?? '')); ?>" alt="product">
                         <div style="padding: 10px;">
                             <h4 style="margin: 0; font-size: 0.85rem; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><?php echo $p['name']; ?></h4>
                             <p style="color: #ef4444; font-weight: 700; margin: 4px 0 2px 0;">₱<?php echo number_format($p['price'], 2); ?></p>
