@@ -1,4 +1,4 @@
-# PROJECT-E — Gym Management & POS
+# Capstone UI PROJECT-E — Gym Management & POS
 
 ## A. Install and use (Windows)
 
@@ -10,18 +10,6 @@
 6. Change the PIN.
 7. Change the admin password (default `admin123`).
 8. Click **Download Backup**. Keep the file safe.
-
-### Daily use
-- **Check in a member:** Dashboard → turn the scanner on → scan the member's QR.
-- **New member:** Manage Members → fill in the form → Complete Registration → print the QR.
-- **Old member:** Manage Members → Encode Existing / Legacy Member.
-- **Renew:** member's **QR** button → Update Membership → +1 Month (or more) → Save.
-- **Sell products:** POS → click products → Complete (Cash) or Pay via GCash.
-- **Day pass:** Walk-In Day Pass → Pay.
-- **Expense:** Expenses → Add Expense.
-- **Salary:** Staff → add the staff member → Expenses → Add Employee Salary.
-- **Export:** Export to Excel (CSV).
-- **Lock:** 🔒 Lock.
 
 ### Forgot
 - **PIN:** lock screen → Forgot PIN? → admin username + password.
@@ -35,7 +23,7 @@
 
 ---
 
-## B. Run from source
+## B. Run in VSCODE
 
 ### Windows
 1. Install Node.js and Git.
@@ -47,11 +35,11 @@
    npm start
    ```
 
-### Linux / macOS
+### For Linux / macOS
 1. Install Node.js, Git, and PHP 8 with `pdo_sqlite`.
 2. Run the same commands as on Windows.
 
-### Browser only (no Electron)
+### for Browser only (no Electron)
 1. Run:
    ```
    php -S 127.0.0.1:8000 router.php
@@ -60,7 +48,7 @@
 
 ---
 
-## C. Build the installer
+## C. Creating and Building the installer
 
 ### On Windows
 1. Run:
@@ -91,11 +79,11 @@
 
 ---
 
-## E. Problems
+## E. If you encounter Problems
 
 | Problem | Fix |
 |---|---|
-| PHP server failed to start | Reinstall the app |
+| PHP server cannot start | Reinstall the app |
 | Camera not working | Close other apps using the camera, and check Windows camera privacy settings |
 | App locked | Enter the PIN |
-| Too many wrong attempts | Wait 30 seconds |
+| many wrong pass attempts | Wait 30 seconds |
