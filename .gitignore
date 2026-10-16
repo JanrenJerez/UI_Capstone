@@ -1,0 +1,8 @@
+# Installed packages (run `npm install` to get them back)
+node_modules/
+
+# Build output (the installer is too big for GitHub; attach it to a Release instead)
+dist/
+
+# Old copy of the project from the Mac
+Project E mac installer/

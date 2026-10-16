@@ -284,3 +284,9 @@ Starting point: commit `a80e7ce` ("bug fixes and rebuilt installer").
 ## 🔧 Build notes
 - On Linux: `node node_modules/electron-builder/cli.js --win --x64` (needs Wine; `node_modules/.bin` lost its execute permission when copied from the Mac, and running `npm install` again restores it).
 - Dev run on Linux: `npm start` uses the system `php`. Without `USER_DATA_PATH`, the dev server uses (and migrates) `database/gym.db` in the repo.
+
+## 🗂️ Repository cleanup (October 16)
+- Rewrote the git history to remove `node_modules/`, `dist/` and `Project E mac installer/`. They contained files over GitHub's 100 MB limit (Electron and the installer); the repo went from 1.4 GB to about 39 MB.
+- Added `.gitignore` so those folders stay out of git. Run `npm install` to restore `node_modules/`, and build the installer to recreate `dist/`.
+- Added `README.md` with setup and usage instructions.
+- A full backup of the old history is kept locally at `../Capstone-backup-before-rewrite.git`.
