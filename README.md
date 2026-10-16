@@ -2,7 +2,7 @@
 
 ## A. Install and use (Windows)
 
-1. Download `PROJECT - E Setup 1.0.0.exe` from the **Releases** page.
+1. Download `PROJECT - E Setup 1.0.1.exe` from the **Releases** page.
 2. Run it.
 3. Open **PROJECT - E**.
 4. Enter PIN `1234`.
@@ -68,7 +68,7 @@
    npm install
    npm run build
    ```
-2. Get the installer from `dist/PROJECT - E Setup 1.0.0.exe`.
+2. Get the installer from `dist/PROJECT - E Setup 1.0.1.exe`.
 
 ### On Linux
 1. Run:
@@ -77,7 +77,7 @@
    npm install
    node node_modules/electron-builder/cli.js --win --x64
    ```
-2. Get the installer from `dist/PROJECT - E Setup 1.0.0.exe`.
+2. Get the installer from `dist/PROJECT - E Setup 1.0.1.exe`.
 
 ---
 
@@ -99,5 +99,3 @@
 | Camera not working | Close other apps using the camera, and check Windows camera privacy settings |
 | App locked | Enter the PIN |
 | Too many wrong attempts | Wait 30 seconds |
-
-More details: `CHANGES.md`

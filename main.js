@@ -84,9 +84,14 @@ function startPhpServer(userDataPath, port) {
     // router.php blocks direct access to the database and internal files
     const args = ['-S', `${PHP_HOST}:${port}`, '-t', docRoot, path.join(docRoot, 'router.php')];
 
-    // Only force our php.ini when using the bundled Windows binary
+    // Only force our php.ini when using the bundled Windows binary.
+    // extension_dir must be absolute: a relative "ext" depends on the working folder,
+    // and without it PHP starts with no SQLite driver ("Database connection failed").
     if (phpBinary !== 'php') {
-        args.unshift('-c', path.join(getPhpDir(), 'php.ini'));
+        args.unshift(
+            '-c', path.join(getPhpDir(), 'php.ini'),
+            '-d', `extension_dir=${path.join(getPhpDir(), 'ext')}`
+        );
     }
 
     phpServer = cp.spawn(phpBinary, args, {
