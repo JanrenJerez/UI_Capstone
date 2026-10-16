@@ -10,6 +10,12 @@ function export_dir() {
     return $dir;
 }
 
+// Text typed by staff (e.g. a customer named "=SUM(...)") must not run as an Excel formula
+function csv_safe($value) {
+    $value = (string) $value;
+    return ($value !== '' && strpbrk($value[0], "=+-@\t\r") !== false) ? "'" . $value : $value;
+}
+
 // Write the full sales report as CSV (UTF-8 with BOM so Excel shows ₱ and names correctly)
 function write_sales_report_csv($conn, $handle) {
     fputs($handle, "\xEF\xBB\xBF");
@@ -20,9 +26,9 @@ function write_sales_report_csv($conn, $handle) {
         fputcsv($handle, [
             '#' . $r['transaction_id'],
             $r['source_type'] === 'MEMBERSHIP' ? 'Membership' : 'POS',
-            $r['customer_name'],
+            csv_safe($r['customer_name']),
             $r['date_recorded'],
-            $r['items_list'],
+            csv_safe($r['items_list']),
             number_format((float) $r['amount'], 2, '.', ''),
             $r['payment_method'],
             $r['status'],

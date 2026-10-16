@@ -141,8 +141,10 @@ if (isset($_GET['edited']) && ($found = find_member($pdo, $_GET['edited']))) {
 
 // Member list: server-side search + pagination
 $search = trim($_GET['q'] ?? '');
-$perPage = 20;
-$page = current_page();
+// ?print=1 lists every matching member for the printed report
+$printAll = isset($_GET['print']);
+$perPage = $printAll ? 1000000 : 20;
+$page = $printAll ? 1 : current_page();
 $where = '';
 $params = [];
 if ($search !== '') {
@@ -694,7 +696,7 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <div class="glass-panel">
         <h2 class="page-title">
             Management Dashboard
-            <button onclick="window.print()" class="btn-action btn-secondary no-print" style="font-size:0.8rem;">Download Report (PDF)</button>
+            <a href="manage.php?<?php echo e(http_build_query(['q' => $search, 'print' => 1])); ?>" class="btn-action btn-secondary no-print" style="font-size:0.8rem;">Download Report (PDF)</a>
         </h2>
 
         <?php if (!empty($successMsg) && !isset($_GET['imported'])): ?>
@@ -759,7 +761,7 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </tbody>
             </table>
         </div>
-        <?php echo render_pagination($memberTotal, $perPage, $page); ?>
+        <?php if (!$printAll) echo render_pagination($memberTotal, $perPage, $page); ?>
     </div>
 </div>
 
@@ -852,6 +854,11 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
     makeQr('newMemberQr', <?php echo json_encode($registeredData['qr_id'] ?? null); ?>);
     makeQr('savedMemberQr', <?php echo json_encode($qrMember['qr_id'] ?? null); ?>);
 
+    <?php if ($printAll): ?>
+    // Report mode: every member is listed, open the print dialog straight away
+    window.addEventListener('load', () => window.print());
+    <?php endif; ?>
+
     function printQrCard() {
         document.body.classList.add('printing-qr');
         window.print();
@@ -940,8 +947,10 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     function setRegExpiry(months, button) {
         selectedMonths = months;
-        const date = new Date();
-        date.setMonth(date.getMonth() + months);
+        // Jan 31 + 1 month = Feb 28/29 (not Mar 3)
+        const today = new Date();
+        const date = new Date(today.getFullYear(), today.getMonth() + months, 1);
+        date.setDate(Math.min(today.getDate(), new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()));
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');

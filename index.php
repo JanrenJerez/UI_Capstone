@@ -415,6 +415,7 @@ try {
         try {
             await html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 250 } }, onScanSuccess);
             scannerRunning = true; scannerToggle.checked = true; toggleText.innerText = "Scanner On";
+            window.peLock.pause(); // keep the front desk unlocked while scanning
             resultDiv.innerText = "Ready to scan...";
         } catch (err) {
             scannerRunning = false; scannerToggle.checked = false; toggleText.innerText = "Scanner Off";
@@ -425,6 +426,7 @@ try {
     async function stopScanner() {
         if (!scannerRunning) return;
         try { await html5QrCode.stop(); scannerRunning = false; } catch (err) {}
+        window.peLock.resume();
     }
 
     if (scannerToggle) {
@@ -443,7 +445,10 @@ try {
         formData.append('qr_id', decodedText);
 
         fetch('/pos/check_member.php', { method: 'POST', body: formData })
-        .then(res => res.json())
+        .then(res => {
+            if (res.status === 401) { window.location.href = '/lock.php'; throw new Error('locked'); }
+            return res.json();
+        })
         .then(data => {
             if (data.status === "success") {
                 resultDiv.innerText = "✔ " + data.member_name;

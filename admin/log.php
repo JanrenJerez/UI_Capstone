@@ -9,8 +9,9 @@ if (!$id) {
     exit();
 }
 
-$success = false;
-$renewalRecorded = false;
+// Shown after the redirect that follows a save (so refreshing never saves twice)
+$success = isset($_GET['saved']);
+$renewalRecorded = !empty($_GET['renewed']);
 $error = "";
 
 try {
@@ -68,8 +69,8 @@ try {
                     "Renewal - $tier ($months month" . ($months > 1 ? 's' : '') . ")");
             }
 
-            $success = true;
-            $renewalRecorded = $isRenewal;
+            header("Location: log.php?id=" . intval($id) . "&saved=1" . ($isRenewal ? "&renewed=1" : ""));
+            exit();
             $member['name'] = $newName;
             $member['contact'] = $contact;
             $member['address'] = $address;
@@ -493,6 +494,14 @@ try {
         return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
     }
 
+    // Jan 31 + 1 month = Feb 28/29 (not Mar 3)
+    function addMonthsClamped(date, months) {
+        const d = new Date(date.getFullYear(), date.getMonth() + months, 1);
+        const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+        d.setDate(Math.min(date.getDate(), lastDay));
+        return d;
+    }
+
     function toIsoDate(date) {
         return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     }
@@ -503,8 +512,7 @@ try {
         let start = originalExpiry ? new Date(originalExpiry + "T00:00:00") : today;
         if (start < today) start = today;
 
-        const newExpiry = new Date(start);
-        newExpiry.setMonth(newExpiry.getMonth() + months);
+        const newExpiry = addMonthsClamped(start, months);
         document.getElementById("expiryDate").value = toIsoDate(newExpiry);
 
         document.querySelectorAll(".duration-btn").forEach(btn => btn.classList.remove("active"));

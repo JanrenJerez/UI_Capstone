@@ -28,6 +28,7 @@
       "member_profile.php",
       "uploads.php",
       "router.php",
+      "keepalive.php",
       "forgot_pin.php",
       "lock.php",
       "admin/**/*",

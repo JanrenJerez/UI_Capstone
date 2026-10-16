@@ -64,17 +64,38 @@
 </style>
 
 <script>
-    // Lock the app after 5 minutes without mouse/keyboard activity
-    (function () {
+    // Lock the app after 5 minutes without mouse/keyboard activity.
+    // window.peLock.pause() keeps it unlocked (used while the QR scanner is running).
+    window.peLock = (function () {
         const LOCK_AFTER_MS = 5 * 60 * 1000;
-        let timer;
+        const KEEPALIVE_MS = 2 * 60 * 1000;
+        let timer = null, keepalive = null, paused = false;
+
+        function lockNow() { window.location.href = '/logout.php'; }
         function reset() {
             clearTimeout(timer);
-            timer = setTimeout(() => { window.location.href = '/logout.php'; }, LOCK_AFTER_MS);
+            if (!paused) timer = setTimeout(lockNow, LOCK_AFTER_MS);
         }
+        function pause() {
+            paused = true;
+            clearTimeout(timer);
+            clearInterval(keepalive);
+            keepalive = setInterval(() => {
+                fetch('/keepalive.php', { headers: { 'X-Requested-With': 'fetch' } })
+                    .then(res => { if (res.status === 401) window.location.href = '/lock.php'; })
+                    .catch(() => {});
+            }, KEEPALIVE_MS);
+        }
+        function resume() {
+            paused = false;
+            clearInterval(keepalive);
+            reset();
+        }
+
         ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(evt =>
             window.addEventListener(evt, reset, { passive: true })
         );
         reset();
+        return { pause, resume, reset };
     })();
 </script>

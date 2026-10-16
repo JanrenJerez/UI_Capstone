@@ -113,6 +113,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// After a successful save, redirect so refreshing the page doesn't submit the form again
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $message !== '' && $error === '') {
+    header('Location: settings.php?msg=' . urlencode($message));
+    exit();
+}
+if (isset($_GET['msg'])) {
+    $message = (string) $_GET['msg'];
+}
 if (isset($_GET['restored'])) {
     $message = 'Backup restored successfully.';
 }

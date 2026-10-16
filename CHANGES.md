@@ -9,9 +9,10 @@
 |---|---|---|
 | **1 — Offline Windows build** | Bundled PHP + VC++ runtime, local QR libraries, data in AppData, critical bugs #1–#8 | ✅ Done and **tested on a real Windows PC** (installs, QR scanner opens, day pass, products with images, data survives restart) |
 | **2 — Open issues** | Every remaining item #9–#25, plus 12 more bugs found along the way | ✅ Done, **tested on Windows** |
-| **3 — Bug sweep** | Full review of the code: 16 more bugs fixed (revenue, renewals, stock, uploads, forms) | ✅ Done and tested on Linux. ⏳ Needs a quick retest on Windows |
+| **3 — Bug sweep** | Full review of the code: 16 more bugs fixed (revenue, renewals, stock, uploads, forms) | ✅ Done, **tested on Windows** |
+| **4 — Bug sweep 2** | App startup, scanner auto-lock, duplicate saves, export safety, report printing: 10 bugs | ✅ Done and tested on Linux. ⏳ Needs a quick retest on Windows |
 
-Current installer: `dist/PROJECT - E Setup 1.0.0.exe` (built October 16, 13:19).
+Current installer: `dist/PROJECT - E Setup 1.0.0.exe` (built October 16, 14:04).
 
 ### ⚠️ What changes for the user after updating
 - **The app now opens to a PIN screen.** The PIN is **1234**.
@@ -150,6 +151,48 @@ Database schema is now **version 2** (new `membership_payments` table and `sale_
 
 ---
 
+## 🧹 Round 4 — Bug sweep 2 (October 16)
+
+Starting point: commit `a80e7ce` ("bug fixes and rebuilt installer").
+
+### 🖥️ App startup (`main.js`)
+| Bug | Effect | Fix |
+|---|---|---|
+| PHP always used **port 8000** | If another program (XAMPP, a dev server) was already on port 8000, the app showed **that program's pages** or nothing at all | The app asks Windows for a free port on every launch |
+| The app could be opened twice | The second copy used the first copy's server; closing the first broke the second | Only one copy runs; opening it again just brings the existing window to the front |
+| PHP failing to start, crashing, or not answering | A blank white window with no explanation | A clear error message, then the app closes |
+
+### 📷 Dashboard scanner
+| Bug | Effect | Fix |
+|---|---|---|
+| The 5-minute auto-lock only watched the mouse and keyboard | **A front desk using only the QR scanner got locked out mid-shift**, and scans started failing | While the scanner is **on**, the dashboard stays unlocked (kiosk mode) and keeps the session alive (new `keepalive.php`). Switching the scanner **off** brings back the normal 5-minute lock. If the app ever gets locked, a scan goes straight to the PIN screen. |
+
+### 📝 Saving and refreshing
+| Bug | Effect | Fix |
+|---|---|---|
+| **Update Membership** (`log.php`) didn't redirect after saving | Refreshing after a renewal **recorded the payment twice** | Redirects after saving |
+| **Settings** didn't redirect after saving | Refreshing submitted the form again | Redirects after saving |
+
+### 📊 Reports and exports
+| Bug | Effect | Fix |
+|---|---|---|
+| **Download Report (PDF)** on Manage Members | After pagination was added, it printed **only the 20 members on the current page** | Opens a print view with **every** member (respecting the current search) |
+| CSV export copied names as-is | A customer name like `=HYPERLINK(...)` would **run as a formula** when opened in Excel | Text starting with `=`, `+`, `-` or `@` is prefixed with `'` so Excel shows it as text |
+
+### 📅 Dates and limits
+| Bug | Effect | Fix |
+|---|---|---|
+| "+1 Month" on registration and renewal | Jan 31 + 1 month became **Mar 3** | Clamped to the end of the month (Jan 31 → Feb 28/29) |
+| Upload limit of 8 MB | Restoring a backup or uploading an image over 8 MB **failed silently** | Limits raised to 64 MB (file) / 72 MB (form) in the bundled `php.ini` |
+
+### Windows retest for round 4
+1. Open the app, then try to open it again: the existing window comes to the front and no second window opens.
+2. Dashboard: switch the **scanner on** and leave the mouse alone for over 5 minutes. It must **not** lock, and scans still work. Switch it off and wait 5 minutes: it locks.
+3. Update Membership → +1 Month → Save, then press **Ctrl+R**. Only **one** renewal payment appears in POS History.
+4. Manage Members → **Download Report (PDF)**: the print preview lists every member.
+
+---
+
 ## 🪟 Offline Windows build (round 1, summary)
 - **Bundled PHP:** PHP 8.5.11 for Windows in `resources/php/`, plus `vcruntime140.dll`, `vcruntime140_1.dll` and `msvcp140.dll`.
 - **`main.js`:**
@@ -164,7 +207,7 @@ Database schema is now **version 2** (new `membership_payments` table and `sale_
 ## 📁 Files
 
 **New:**
-- **Pages:** `lock.php`, `forgot_pin.php`, `admin/settings.php`, `uploads.php`
+- **Pages:** `lock.php`, `forgot_pin.php`, `admin/settings.php`, `uploads.php`, `keepalive.php`
 - **Server:** `router.php`
 - **Includes:** `includes/auth.php`, `includes/helpers.php`, `includes/migrate.php`, `includes/upload_paths.php`
 - **Assets:** `assets/auth.css`, `assets/vendor/*.js`
@@ -212,7 +255,19 @@ Database schema is now **version 2** (new `membership_payments` table and `sale_
 - **Forms:** an expense of ₱1,234.56 saves; an invalid date becomes today; expenses and staff redirect after saving.
 - **Day passes:** counted from the sale items.
 
-**Not yet tested:** round 3 on Windows, and the mobile/narrow-window layout (#19) by eye.
+**Round 3 on Windows:** ✅ tested by the user.
+
+**Round 4 (Linux, same setup). All passed:**
+- **Keepalive:** returns 401 while locked and OK while unlocked.
+- **Renewal:** saving redirects; reloading the result page adds no second payment.
+- **Settings:** saving redirects.
+- **CSV:** `=HYPERLINK(...)` is exported as `'=HYPERLINK(...)`.
+- **Report:** with 28 members, the page shows 20 and the print view shows all 28 and opens the print dialog.
+- **Bulk legacy imports:** no payments recorded.
+- **Month math:** Jan 31 + 1 = Feb 28 (Feb 29 in 2028); Dec 31 + 2 = Feb 28.
+- **`main.js`:** passes a syntax check. The port, single-copy and error-message behaviour can only be checked in the real app, so it's covered by the Windows retest above.
+
+**Not yet tested:** round 4 on Windows, and the mobile/narrow-window layout (#19) by eye.
 
 ### Windows retest checklist
 1. Install over the existing app. Launch: the **PIN screen** appears; unlock with **1234**.

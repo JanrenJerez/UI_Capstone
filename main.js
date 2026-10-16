@@ -1,17 +1,29 @@
-const { app, BrowserWindow, nativeImage } = require('electron');
+const { app, BrowserWindow, nativeImage, dialog } = require('electron');
 const cp = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const net = require('net');
 
 const PHP_HOST = '127.0.0.1';
-const PHP_PORT = 8000;
-const START_URL = `http://${PHP_HOST}:${PHP_PORT}/index.php`;
 
 let mainWindow = null;
 let phpServer = null;
+let quitting = false;
 
 const iconPath = nativeImage.createFromPath(path.join(__dirname, 'assets/logo.ico'));
+
+// Only one copy of the app may run: a second launch just focuses the open window
+if (!app.requestSingleInstanceLock()) {
+    app.quit();
+} else {
+    app.on('second-instance', () => {
+        if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+        }
+    });
+}
 
 // Folder holding the bundled portable PHP (php.exe + php.ini + ext/)
 function getPhpDir() {
@@ -48,11 +60,29 @@ function setupUserData() {
     return userDataPath;
 }
 
-function startPhpServer(userDataPath) {
+// Ask the OS for a free port, so another program on port 8000 can't clash with the app
+function findFreePort() {
+    return new Promise((resolve, reject) => {
+        const srv = net.createServer();
+        srv.unref();
+        srv.on('error', reject);
+        srv.listen(0, PHP_HOST, () => {
+            const { port } = srv.address();
+            srv.close(() => resolve(port));
+        });
+    });
+}
+
+function showFatalError(message) {
+    dialog.showErrorBox('PROJECT - E could not start', message);
+    app.quit();
+}
+
+function startPhpServer(userDataPath, port) {
     const phpBinary = getPhpBinary();
     const docRoot = app.getAppPath();
     // router.php blocks direct access to the database and internal files
-    const args = ['-S', `${PHP_HOST}:${PHP_PORT}`, '-t', docRoot, path.join(docRoot, 'router.php')];
+    const args = ['-S', `${PHP_HOST}:${port}`, '-t', docRoot, path.join(docRoot, 'router.php')];
 
     // Only force our php.ini when using the bundled Windows binary
     if (phpBinary !== 'php') {
@@ -66,34 +96,50 @@ function startPhpServer(userDataPath) {
     });
 
     phpServer.stderr.on('data', (data) => console.log(`[php] ${data}`));
-    phpServer.on('error', (err) => console.error('Failed to start PHP:', err));
+    phpServer.on('error', (err) => {
+        console.error('Failed to start PHP:', err);
+        showFatalError(`The built-in PHP server failed to start.\n\n${err.message}`);
+    });
+    phpServer.on('exit', (code) => {
+        if (!quitting) {
+            showFatalError(`The built-in PHP server stopped unexpectedly (exit code ${code}). Please reopen the app.`);
+        }
+    });
 }
 
 function stopPhpServer() {
+    quitting = true;
     if (phpServer) {
         phpServer.kill();
         phpServer = null;
     }
 }
 
-// Poll the PHP server until it answers, then load the app
-function waitForServer(onReady, attempt = 0) {
-    const req = http.get(START_URL, (res) => {
-        res.resume();
-        onReady();
-    });
-    req.on('error', () => {
-        if (attempt < 40) {
-            setTimeout(() => waitForServer(onReady, attempt + 1), 250);
-        } else {
-            onReady();
-        }
+// Poll the PHP server until it answers (up to ~15 seconds)
+function waitForServer(url, attempt = 0) {
+    return new Promise((resolve, reject) => {
+        const req = http.get(url, (res) => {
+            res.resume();
+            resolve();
+        });
+        req.on('error', () => {
+            if (attempt >= 60) return reject(new Error('timeout'));
+            setTimeout(() => waitForServer(url, attempt + 1).then(resolve, reject), 250);
+        });
     });
 }
 
-function createWindow() {
+async function createWindow() {
     const userDataPath = setupUserData();
-    startPhpServer(userDataPath);
+
+    let port;
+    try {
+        port = await findFreePort();
+    } catch (err) {
+        return showFatalError(`No free network port is available for the app.\n\n${err.message}`);
+    }
+    const startUrl = `http://${PHP_HOST}:${port}/index.php`;
+    startPhpServer(userDataPath, port);
 
     mainWindow = new BrowserWindow({
         width: 1280,
@@ -109,16 +155,21 @@ function createWindow() {
         app.dock.setIcon(iconPath);
     }
 
-    waitForServer(() => {
-        if (mainWindow) mainWindow.loadURL(START_URL);
-    });
-
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
+
+    try {
+        await waitForServer(startUrl);
+    } catch (err) {
+        return showFatalError('The built-in PHP server did not respond. Please reopen the app.');
+    }
+    if (mainWindow) mainWindow.loadURL(startUrl);
 }
 
-app.whenReady().then(createWindow);
+if (app.hasSingleInstanceLock()) {
+    app.whenReady().then(createWindow);
+}
 
 app.on('before-quit', stopPhpServer);
 

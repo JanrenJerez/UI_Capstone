@@ -43,7 +43,7 @@ if (isset($_GET['export'])) {
 function save_product_image($field) {
     $file = $_FILES[$field] ?? null;
     if (!$file || $file['error'] === UPLOAD_ERR_NO_FILE) return [null, ''];
-    if ($file['error'] === UPLOAD_ERR_INI_SIZE || $file['error'] === UPLOAD_ERR_FORM_SIZE) return [null, 'Image is too large (max 8 MB).'];
+    if ($file['error'] === UPLOAD_ERR_INI_SIZE || $file['error'] === UPLOAD_ERR_FORM_SIZE) return [null, 'Image is too large (max 64 MB).'];
     if ($file['error'] !== UPLOAD_ERR_OK) return [null, 'Image upload failed. Please try again.'];
 
     $allowed = [IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png', IMAGETYPE_GIF => 'gif', IMAGETYPE_WEBP => 'webp'];
