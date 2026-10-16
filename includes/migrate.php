@@ -54,6 +54,41 @@ function run_migrations(PDO $pdo) {
 
         $pdo->exec('PRAGMA user_version = 1');
         $pdo->commit();
+        $version = 1;
+    }
+
+    if ($version < 2) {
+        $pdo->beginTransaction();
+
+        // Membership revenue comes from real payments (registrations and renewals),
+        // not from the members table. Legacy imports record no payment.
+        // member_name is a snapshot so revenue history survives a member being deleted.
+        $pdo->exec("CREATE TABLE IF NOT EXISTS membership_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id INTEGER,
+            member_name TEXT,
+            amount REAL NOT NULL DEFAULT 0,
+            description TEXT,
+            paid_at DATETIME
+        )");
+        // Keep existing revenue totals: one payment per existing member, as before
+        $pdo->exec("INSERT INTO membership_payments (member_id, member_name, amount, description, paid_at)
+            SELECT id, name, final_rate, COALESCE(NULLIF(tier, ''), NULLIF(membership_type, ''), 'Standard'), created_at
+            FROM members");
+
+        // Remember what was sold, so history still reads right after a product is deleted
+        $columns = $pdo->query("PRAGMA table_info(sale_items)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('item_name', $columns, true)) {
+            $pdo->exec("ALTER TABLE sale_items ADD COLUMN item_name TEXT");
+        }
+        $pdo->exec("UPDATE sale_items SET item_name = CASE
+                WHEN product_id = 0 THEN 'Day Pass'
+                ELSE COALESCE((SELECT name FROM products WHERE products.id = sale_items.product_id), 'Deleted product')
+            END
+            WHERE item_name IS NULL");
+
+        $pdo->exec('PRAGMA user_version = 2');
+        $pdo->commit();
     }
 }
 

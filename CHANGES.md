@@ -8,9 +8,10 @@
 | Round | What | Status |
 |---|---|---|
 | **1 — Offline Windows build** | Bundled PHP + VC++ runtime, local QR libraries, data in AppData, critical bugs #1–#8 | ✅ Done and **tested on a real Windows PC** (installs, QR scanner opens, day pass, products with images, data survives restart) |
-| **2 — Open issues** | Every remaining item #9–#25, plus 12 more bugs found along the way | ✅ Done and tested on Linux. ⏳ **Needs a retest on Windows** with the new installer |
+| **2 — Open issues** | Every remaining item #9–#25, plus 12 more bugs found along the way | ✅ Done, **tested on Windows** |
+| **3 — Bug sweep** | Full review of the code: 16 more bugs fixed (revenue, renewals, stock, uploads, forms) | ✅ Done and tested on Linux. ⏳ Needs a quick retest on Windows |
 
-Current installer: `dist/PROJECT - E Setup 1.0.0.exe` (built October 16, 12:32).
+Current installer: `dist/PROJECT - E Setup 1.0.0.exe` (built October 16, 13:19).
 
 ### ⚠️ What changes for the user after updating
 - **The app now opens to a PIN screen.** The PIN is **1234**.
@@ -101,6 +102,54 @@ If both the PIN **and** the admin password are forgotten, there is no recovery p
 
 ---
 
+## 🧹 Round 3 — Bug sweep (October 16)
+
+A line-by-line review of every page after the Windows test. All of these were real bugs in the existing code.
+
+### 💰 Revenue and memberships
+| Bug | Effect | Fix |
+|---|---|---|
+| Revenue was computed from the `members` table (`final_rate` on the day the member was created) | **Renewals never counted as revenue**, and **legacy imports counted as revenue today**, even though those members paid in the past | New **`membership_payments`** table. Registrations and renewals record a payment; legacy imports don't. Existing members were converted to one payment each, so past totals are unchanged. |
+| Deleting a membership row in the dashboard's POS History | **Deleted the whole member** (and their QR) | Deletes only that payment record |
+| Deleting a member | Their past payments disappeared from revenue | Payments keep a copy of the member's name, so revenue history stays |
+| Renewing via **Update Membership** (`log.php`) | Not recorded anywhere | Clicking **+1 Month / +3 Months / ...** shows a ticked **"Record this as a renewal payment"** box; the payment appears in history as "Renewal - TIER (N months)" |
+| `log.php` tier names were mixed-case (`Gym Use - Regular`) while the database uses uppercase | The current tier was never highlighted, and saving wrote inconsistent tier names | Uppercase names, shared with `manage.php` (`MEMBERSHIP_TIERS`) |
+| `log.php` Base Rate field | **Anything typed was overwritten on every keystroke** | Typing just updates the total; tier and duration buttons recalculate |
+| `log.php` duration buttons | Clicking +1 then +2 extended by 3 months (stacked) | Always extends from the saved expiry (or from today if already expired) |
+| Edit modal in Manage Members: picking a tier | Didn't change the base rate | Sets the tier's rate |
+| Scanning the same member twice | Counted twice in **Attendance Today** | One check-in per member per day ("Already checked in today") |
+
+### 🛒 POS and products
+| Bug | Effect | Fix |
+|---|---|---|
+| Image upload accepted **any file**, including `.php` | In dev mode, an uploaded `.php` file would run as code | Only real JPG/PNG/GIF/WEBP images (checked by content, not file name) |
+| Product price/stock accepted negative or blank values | Broken prices and negative stock | Validated with a clear error message |
+| Deleting a product | Every past sale of it showed as **"Day Pass"** in history and exports | Each sale line stores the item name (`sale_items.item_name`); old sales were filled in ("Deleted product" where the product was already gone) |
+| Setting a sale to **Void** | Items never went back into stock | Void returns the items; un-voiding takes them out again (refused if stock is short) |
+| "Day Passes Sold Today" | Counted by searching for "(Day Pass)" in the customer name | Counted from the actual day-pass sale items |
+| POS success/error messages (`?success=1`, ...) | Never displayed | Green and red message bars |
+
+### 📝 Forms
+| Bug | Effect | Fix |
+|---|---|---|
+| Expense and salary amounts had `step="100"` | **Amounts like ₱1,234.56 or ₱150 were rejected** by the form | Any amount from ₱0.01 |
+| Registration discount, legacy base rate and legacy discount had `step="50"` | Amounts like ₱25 or ₱875 were rejected | Any amount |
+| Refreshing after saving a member, expense or staff member | **Saved it again (duplicates)** | Every save redirects, so a refresh only reloads the page |
+| Expense date | Any text was accepted | Must be a real date; otherwise today |
+
+Database schema is now **version 2** (new `membership_payments` table and `sale_items.item_name`). Existing installs upgrade automatically on first launch.
+
+### Windows retest for round 3
+1. Register a member: **Revenue Today** goes up. Encode a legacy member: it does **not**.
+2. Open a member → **Update Membership** → click **+1 Month** → Save. "Renewal payment recorded" appears and revenue goes up.
+3. Delete that renewal row from POS History. The **member is still there**.
+4. Scan the same QR twice: the second scan says "already checked in", and Attendance Today goes up by 1, not 2.
+5. Add an expense of **₱1,234.56**.
+6. Sell a product, set the sale to **Void**: the stock returns.
+7. After saving a member, expense or staff member, press **Ctrl+R**: no duplicate appears.
+
+---
+
 ## 🪟 Offline Windows build (round 1, summary)
 - **Bundled PHP:** PHP 8.5.11 for Windows in `resources/php/`, plus `vcruntime140.dll`, `vcruntime140_1.dll` and `msvcp140.dll`.
 - **`main.js`:**
@@ -125,7 +174,7 @@ If both the PIN **and** the admin password are forgotten, there is no recovery p
 
 **Modified:** `index.php`, `admin/manage.php`, `admin/log.php`, `admin/staff.php`, `pos/sales.php`, `pos/expenses.php`, `pos/check_member.php`, `package.json`, `resources/php/php.ini`
 
-**Database:** schema version tracked with `PRAGMA user_version` (now **1**). New tables: `settings`, `walkin_visits`. The migration runs automatically; `database/gym.db` in the repo is left unchanged as the starter copy.
+**Database:** schema version tracked with `PRAGMA user_version` (now **2**). New tables: `settings`, `walkin_visits`, `membership_payments`. New column: `sale_items.item_name`. The migration runs automatically; `database/gym.db` in the repo is left unchanged as the starter copy.
 
 ---
 
@@ -151,7 +200,19 @@ If both the PIN **and** the admin password are forgotten, there is no recovery p
   - Forgot PIN works with the admin password; forgot password works with the PIN; `reset_pass.php` can't be opened directly.
   - Backup downloads a valid database. Restore rejects non-database files and wrong passwords, saves a safety copy, then restores.
 
-**Not yet tested:** the new installer on Windows, and the mobile/narrow-window layout (#19) by eye.
+**Round 2 on Windows:** ✅ tested by the user. The app installs and works.
+
+**Round 3 (Linux, same setup, fresh copy of the starter database). All passed:**
+- **Migration:** reached version 2; 3 payments matching the old revenue total (₱2,300); item names filled in.
+- **Members:** registering records a payment and legacy import doesn't; register/import/edit redirect after saving; a renewal records "Renewal - GYM USE - STUDENT (2 months)"; a plain edit records nothing; `log.php` highlights the current tier.
+- **History:** deleting a membership row keeps the member.
+- **Scans:** a second scan doesn't add a row.
+- **Uploads and products:** a `.php` upload and a fake `.jpg` are rejected; a negative price is rejected.
+- **POS:** void/un-void moves stock correctly; a sold-then-deleted product still shows its name in history.
+- **Forms:** an expense of ₱1,234.56 saves; an invalid date becomes today; expenses and staff redirect after saving.
+- **Day passes:** counted from the sale items.
+
+**Not yet tested:** round 3 on Windows, and the mobile/narrow-window layout (#19) by eye.
 
 ### Windows retest checklist
 1. Install over the existing app. Launch: the **PIN screen** appears; unlock with **1234**.

@@ -12,7 +12,8 @@ if (isset($_POST['delete_transaction_id'])) {
         $pdo->prepare("DELETE FROM walkin_visits WHERE sale_id = ?")->execute([$delId]);
         $pdo->prepare("DELETE FROM sales WHERE id = ?")->execute([$delId]);
     } else {
-        delete_member($pdo, $delId);
+        // A membership row is a payment record; delete only the payment, never the member
+        $pdo->prepare("DELETE FROM membership_payments WHERE id = ?")->execute([$delId]);
     }
     header("Location: " . $_SERVER['PHP_SELF']);
     exit();
@@ -48,10 +49,10 @@ $dateConditionMembers = "";
 
 if ($filter === 'today') {
     $dateConditionSales = "AND DATE(s.sale_date) = DATE('now', 'localtime')";
-    $dateConditionMembers = "AND DATE(m.created_at) = DATE('now', 'localtime')";
+    $dateConditionMembers = "AND DATE(mp.paid_at) = DATE('now', 'localtime')";
 } elseif ($filter === 'month') {
     $dateConditionSales = "AND strftime('%Y-%m', s.sale_date) = strftime('%Y-%m', 'now', 'localtime')";
-    $dateConditionMembers = "AND strftime('%Y-%m', m.created_at) = strftime('%Y-%m', 'now', 'localtime')";
+    $dateConditionMembers = "AND strftime('%Y-%m', mp.paid_at) = strftime('%Y-%m', 'now', 'localtime')";
 }
 
 try {
@@ -60,7 +61,7 @@ try {
 
     // Member check-ins plus walk-in day pass visits
     $todayAttendance = $pdo->query("
-        SELECT (SELECT COUNT(*) FROM attendance WHERE DATE(scan_time) = DATE('now', 'localtime'))
+        SELECT (SELECT COUNT(DISTINCT member_id) FROM attendance WHERE DATE(scan_time) = DATE('now', 'localtime'))
              + (SELECT COUNT(*) FROM walkin_visits WHERE DATE(visit_time) = DATE('now', 'localtime'))
     ")->fetchColumn();
 
@@ -70,7 +71,7 @@ try {
     $stmtTodaySalesRev = $pdo->query("SELECT SUM(amount) FROM sales WHERE status = 'Paid' AND DATE(sale_date) = DATE('now', 'localtime')");
     $todaySalesRev = $stmtTodaySalesRev ? ($stmtTodaySalesRev->fetchColumn() ?? 0) : 0;
 
-    $stmtTodayMemberRev = $pdo->query("SELECT SUM(final_rate) FROM members WHERE DATE(created_at) = DATE('now', 'localtime')");
+    $stmtTodayMemberRev = $pdo->query("SELECT SUM(amount) FROM membership_payments WHERE DATE(paid_at) = DATE('now', 'localtime')");
     $todayMemberRev = $stmtTodayMemberRev ? ($stmtTodayMemberRev->fetchColumn() ?? 0) : 0;
 
     $todayRevenue = $todaySalesRev + $todayMemberRev;
@@ -78,7 +79,7 @@ try {
     $stmtMonthSalesRev = $pdo->query("SELECT SUM(amount) FROM sales WHERE status = 'Paid' AND strftime('%Y-%m', sale_date) = strftime('%Y-%m', 'now', 'localtime')");
     $monthSalesRev = $stmtMonthSalesRev ? ($stmtMonthSalesRev->fetchColumn() ?? 0) : 0;
 
-    $stmtMonthMemberRev = $pdo->query("SELECT SUM(final_rate) FROM members WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime')");
+    $stmtMonthMemberRev = $pdo->query("SELECT SUM(amount) FROM membership_payments WHERE strftime('%Y-%m', paid_at) = strftime('%Y-%m', 'now', 'localtime')");
     $monthMemberRev = $stmtMonthMemberRev ? ($stmtMonthMemberRev->fetchColumn() ?? 0) : 0;
 
     $monthRevenue = $monthSalesRev + $monthMemberRev;
@@ -104,9 +105,9 @@ try {
         SELECT COALESCE(SUM(si.qty), 0) 
         FROM sales s
         LEFT JOIN sale_items si ON s.id = si.sale_id
-        WHERE s.status = 'Paid' 
-          AND DATE(s.sale_date) = DATE('now', 'localtime') 
-          AND s.customer_name LIKE '%(Day Pass)%'
+        WHERE s.status = 'Paid'
+          AND DATE(s.sale_date) = DATE('now', 'localtime')
+          AND si.product_id = 0
     ");
     if ($stmtTodayDayPasses) $todayDayPasses = $stmtTodayDayPasses->fetchColumn();
 

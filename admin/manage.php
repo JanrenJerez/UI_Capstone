@@ -45,7 +45,7 @@ function member_form_error($m) {
     return '';
 }
 
-function insert_member(PDO $pdo, array $m) {
+function insert_member(PDO $pdo, array $m, $recordPayment) {
     $m['qr_id'] = generate_qr_id($pdo);
     $stmt = $pdo->prepare("
         INSERT INTO members
@@ -54,6 +54,10 @@ function insert_member(PDO $pdo, array $m) {
     ");
     $stmt->execute($m);
     $m['id'] = $pdo->lastInsertId();
+    // Legacy imports already paid in the past, so only new registrations count as revenue
+    if ($recordPayment) {
+        record_membership_payment($pdo, $m['id'], $m['name'], $m['final_rate'], $m['tier']);
+    }
     return $m;
 }
 
@@ -75,11 +79,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && !isset($_POST['delete_member_id']))
                     $m['name'], $m['contact'], $m['address'], $m['expiry_date'], $m['tier'], $m['tier'],
                     $m['base_rate'], $m['discount_amount'], $m['final_rate'], $id
                 ]);
-                $successMsg = "Member record updated successfully!";
-
-                $q = $pdo->prepare("SELECT id, name, qr_id, tier, expiry_date FROM members WHERE id = ?");
-                $q->execute([$id]);
-                $qrMember = $q->fetch(PDO::FETCH_ASSOC);
+                header("Location: manage.php?edited=" . $id);
+                exit();
             } catch (PDOException $e) {
                 error_log("Member update failed: " . $e->getMessage());
                 $error = "Could not save the member. Please try again.";
@@ -91,8 +92,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && !isset($_POST['delete_member_id']))
 
         if (!$error) {
             try {
-                $qrMember = insert_member($pdo, $m);
-                $successMsg = "Existing member successfully imported into the system!";
+                $saved = insert_member($pdo, $m, false);
+                header("Location: manage.php?imported=" . $saved['id']);
+                exit();
             } catch (PDOException $e) {
                 error_log("Legacy import failed: " . $e->getMessage());
                 $error = "Could not save the member. Please try again.";
@@ -104,8 +106,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && !isset($_POST['delete_member_id']))
 
         if (!$error) {
             try {
-                $registeredData = insert_member($pdo, $m);
-                $newMemberCreated = true;
+                $saved = insert_member($pdo, $m, true);
+                header("Location: manage.php?registered=" . $saved['id']);
+                exit();
             } catch (PDOException $e) {
                 error_log("Registration failed: " . $e->getMessage());
                 $error = "Could not save the member. Please try again.";
@@ -114,8 +117,26 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && !isset($_POST['delete_member_id']))
     }
 }
 
+// Results after a redirect (so refreshing the page never saves twice)
 if (isset($_GET['deleted'])) {
     $successMsg = "Member deleted.";
+}
+function find_member(PDO $pdo, $id) {
+    $q = $pdo->prepare("SELECT * FROM members WHERE id = ?");
+    $q->execute([intval($id)]);
+    return $q->fetch(PDO::FETCH_ASSOC) ?: null;
+}
+if (isset($_GET['registered']) && ($found = find_member($pdo, $_GET['registered']))) {
+    $newMemberCreated = true;
+    $registeredData = $found;
+}
+if (isset($_GET['imported']) && ($found = find_member($pdo, $_GET['imported']))) {
+    $qrMember = $found;
+    $successMsg = "Existing member successfully imported into the system!";
+}
+if (isset($_GET['edited']) && ($found = find_member($pdo, $_GET['edited']))) {
+    $qrMember = $found;
+    $successMsg = "Member record updated successfully!";
 }
 
 // Member list: server-side search + pagination
@@ -491,7 +512,7 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <?php if (!empty($error) && !isset($_POST['edit_member_id'])): ?>
             <div class="error-message"><?php echo htmlspecialchars($error); ?></div>
         <?php endif; ?>
-        <?php if (!empty($successMsg) && $_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['form_type']) && $_POST['form_type'] === 'legacy'): ?>
+        <?php if (!empty($successMsg) && isset($_GET['imported'])): ?>
             <div class="success-msg"><?php echo htmlspecialchars($successMsg); ?></div>
         <?php endif; ?>
 
@@ -567,11 +588,11 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="form-row">
                         <div class="form-group">
                             <label for="baseRate">Base Rate (₱)</label>
-                            <input type="number" step="50.00" name="baseRate" id="baseRate" class="form-control" value="900.00" readonly required>
+                            <input type="number" step="0.01" name="baseRate" id="baseRate" class="form-control" value="900.00" readonly required>
                         </div>
                         <div class="form-group">
                             <label for="discountAmount">Discount Amount (₱)</label>
-                            <input type="number" step="50.00" name="discountAmount" id="discountAmount" class="form-control" value="0.00" min="0" oninput="calculateRegTotal()">
+                            <input type="number" step="0.01" name="discountAmount" id="discountAmount" class="form-control" value="0.00" min="0" oninput="calculateRegTotal()">
                         </div>
                     </div>
 
@@ -651,11 +672,11 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <div class="form-row">
                     <div class="form-group">
                         <label for="legacyBaseRate">Recorded / Historical Base Rate (₱)</label>
-                        <input type="number" step="50.00" name="baseRate" id="legacyBaseRate" class="form-control" value="900.00" required>
+                        <input type="number" step="0.01" min="0" name="baseRate" id="legacyBaseRate" class="form-control" value="900.00" required>
                     </div>
                     <div class="form-group">
                         <label for="legacyDiscount">Recorded Discount (₱)</label>
-                        <input type="number" step="50.00" name="discountAmount" id="legacyDiscount" class="form-control" value="0.00" min="0" required>
+                        <input type="number" step="0.01" name="discountAmount" id="legacyDiscount" class="form-control" value="0.00" min="0" required>
                     </div>
                 </div>
 
@@ -676,7 +697,7 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <button onclick="window.print()" class="btn-action btn-secondary no-print" style="font-size:0.8rem;">Download Report (PDF)</button>
         </h2>
 
-        <?php if (!empty($successMsg) && (!isset($_POST['form_type']) || $_POST['form_type'] !== 'legacy')): ?>
+        <?php if (!empty($successMsg) && !isset($_GET['imported'])): ?>
             <div class="success-msg"><?php echo htmlspecialchars($successMsg); ?></div>
         <?php endif; ?>
         <?php if (!empty($error) && isset($_POST['edit_member_id'])): ?>
@@ -771,17 +792,9 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <input type="hidden" name="tier" id="modalTierInput" value="GYM USE - REGULAR">
                 <div class="tier-options">
                     <?php 
-                    $tiers = [
-                        'GYM USE - REGULAR' => 900,
-                        'GYM USE - STUDENT' => 700,
-                        'SUPERVISION - REGULAR' => 1500,
-                        'SUPERVISION - STUDENT' => 1200,
-                        '1-ON-1 COACHING - REGULAR' => 3000,
-                        '1-ON-1 COACHING - STUDENT' => 2500,
-                    ];
-                    foreach ($tiers as $tierName => $rate): 
+                    foreach (MEMBERSHIP_TIERS as $tierName => $rate): 
                     ?>
-                        <div class="tier-card modal-tier-card" data-tier="<?php echo $tierName; ?>" data-rate="<?php echo $rate; ?>" onclick="selectModalTier('<?php echo $tierName; ?>', <?php echo $rate; ?>, this)">
+                        <div class="tier-card modal-tier-card" data-tier="<?php echo $tierName; ?>" data-rate="<?php echo $rate; ?>" onclick="selectModalTier('<?php echo $tierName; ?>', <?php echo $rate; ?>, this, true)">
                             <strong><?php echo ucwords(strtolower($tierName)); ?></strong>
                             <span>₱<?php echo number_format($rate); ?> / mo</span>
                         </div>
@@ -792,7 +805,7 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <div class="form-row">
                 <div class="form-group">
                     <label for="modalBaseRate">Base Rate (₱)</label>
-                    <input type="number" step="0.01" name="baseRate" id="modalBaseRate" class="form-control" oninput="calculateModalTotal()" required>
+                    <input type="number" step="0.01" min="0" name="baseRate" id="modalBaseRate" class="form-control" oninput="calculateModalTotal()" required>
                 </div>
                 <div class="form-group">
                     <label for="modalDiscountAmount">Discount Amount (₱)</label>
@@ -957,8 +970,9 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
         document.getElementById("modalDiscountAmount").value = member.discount_amount || 0;
         
         document.querySelectorAll(".modal-tier-card").forEach(card => {
-            if(card.getAttribute("data-tier") === member.tier) {
-                selectModalTier(member.tier, parseFloat(card.getAttribute("data-rate")), card);
+            card.classList.remove("active");
+            if (card.getAttribute("data-tier") === (member.tier || '').toUpperCase()) {
+                selectModalTier(card.getAttribute("data-tier"), parseFloat(card.getAttribute("data-rate")), card, false);
             }
         });
 
@@ -973,10 +987,10 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
         document.getElementById("editModal").style.display = "none";
     }
 
-    function selectModalTier(tierName, defaultRate, element) {
+    function selectModalTier(tierName, defaultRate, element, userPicked) {
         document.getElementById("modalTierInput").value = tierName;
         const baseInput = document.getElementById("modalBaseRate");
-        baseInput.dataset.monthlyRate = defaultRate;
+        if (userPicked) baseInput.value = parseFloat(defaultRate).toFixed(2);
         document.querySelectorAll(".modal-tier-card").forEach(card => card.classList.remove("active"));
         element.classList.add("active");
         document.getElementById("modalSummaryTier").innerText = tierName;

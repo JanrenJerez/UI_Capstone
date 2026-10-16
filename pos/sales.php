@@ -38,65 +38,82 @@ if (isset($_GET['export'])) {
     exit();
 }
 
+// Save an uploaded product image. Returns [image_url or null, error message or ''].
+// Only real images are accepted (an uploaded .php file must never land in a served folder).
+function save_product_image($field) {
+    $file = $_FILES[$field] ?? null;
+    if (!$file || $file['error'] === UPLOAD_ERR_NO_FILE) return [null, ''];
+    if ($file['error'] === UPLOAD_ERR_INI_SIZE || $file['error'] === UPLOAD_ERR_FORM_SIZE) return [null, 'Image is too large (max 8 MB).'];
+    if ($file['error'] !== UPLOAD_ERR_OK) return [null, 'Image upload failed. Please try again.'];
+
+    $allowed = [IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png', IMAGETYPE_GIF => 'gif', IMAGETYPE_WEBP => 'webp'];
+    $info = @getimagesize($file['tmp_name']);
+    if (!$info || !isset($allowed[$info[2]])) return [null, 'Please choose a JPG, PNG, GIF or WEBP image.'];
+
+    $target_dir = upload_dir();
+    if (!is_dir($target_dir)) mkdir($target_dir, 0777, true);
+
+    $new_filename = time() . '_' . uniqid() . '.' . $allowed[$info[2]];
+    if (!move_uploaded_file($file['tmp_name'], $target_dir . $new_filename)) {
+        return [null, 'Could not save the image. Please try again.'];
+    }
+    return [upload_url($new_filename), ''];
+}
+
+// Validate product fields. Returns [name, price, stock, error].
+function read_product_form($nameField, $priceField, $stockField) {
+    $name = trim($_POST[$nameField] ?? '');
+    $price = $_POST[$priceField] ?? '';
+    $stock = $_POST[$stockField] ?? '';
+    if ($name === '') return [null, null, null, 'Product name is required.'];
+    if (!is_numeric($price) || $price < 0) return [null, null, null, 'Price must be 0 or more.'];
+    if (filter_var($stock, FILTER_VALIDATE_INT) === false || $stock < 0) return [null, null, null, 'Stock must be a whole number, 0 or more.'];
+    return [$name, round((float) $price, 2), (int) $stock, ''];
+}
+
 if (isset($_POST['add_product'])) {
-    $name = $_POST['pname'];
-    $price = $_POST['pprice'];
-    $stock = $_POST['pstock'];
-    
-    $image_path = ""; 
+    [$name, $price, $stock, $formError] = read_product_form('pname', 'pprice', 'pstock');
+    if ($formError) {
+        header("Location: sales.php?error=" . urlencode($formError));
+        exit();
+    }
 
-    if (isset($_FILES['pimg']) && $_FILES['pimg']['error'] === 0) {
-        $target_dir = upload_dir();
-        
-        if (!is_dir($target_dir)) {
-            mkdir($target_dir, 0777, true);
-        }
-
-        $file_extension = pathinfo($_FILES["pimg"]["name"], PATHINFO_EXTENSION);
-        $new_filename = time() . '_' . uniqid() . '.' . $file_extension;
-        $target_file = $target_dir . $new_filename;
-
-        if (move_uploaded_file($_FILES["pimg"]["tmp_name"], $target_file)) {
-            $image_path = upload_url($new_filename);
-        }
+    [$image_path, $imgError] = save_product_image('pimg');
+    if ($imgError) {
+        header("Location: sales.php?error=" . urlencode($imgError));
+        exit();
     }
 
     $stmt = $conn->prepare("INSERT INTO products (name, price, stock, image_url) VALUES (?, ?, ?, ?)");
-    if($stmt->execute([$name, $price, $stock, $image_path])) {
-        header("Location: sales.php?success=1");
-        exit();
-    }
+    $stmt->execute([$name, $price, $stock, $image_path ?? '']);
+    header("Location: sales.php?success=1");
+    exit();
 }
 
 if (isset($_POST['update_product'])) {
     $prod_id = intval($_POST['prod_id']);
-    $name = $_POST['edit_name'];
-    $price = $_POST['edit_price'];
-    $stock = $_POST['edit_stock'];
+    [$name, $price, $stock, $formError] = read_product_form('edit_name', 'edit_price', 'edit_stock');
+    if ($formError) {
+        header("Location: sales.php?error=" . urlencode($formError));
+        exit();
+    }
 
-    if (isset($_FILES['edit_img']) && $_FILES['edit_img']['error'] === 0) {
-        $target_dir = upload_dir();
-        
-        if (!is_dir($target_dir)) {
-            mkdir($target_dir, 0777, true);
-        }
+    [$new_image, $imgError] = save_product_image('edit_img');
+    if ($imgError) {
+        header("Location: sales.php?error=" . urlencode($imgError));
+        exit();
+    }
 
+    if ($new_image) {
         $stmt_img = $conn->prepare("SELECT image_url FROM products WHERE id = ?");
         $stmt_img->execute([$prod_id]);
         $old_img = $stmt_img->fetch(PDO::FETCH_ASSOC);
-
-        $file_extension = pathinfo($_FILES["edit_img"]["name"], PATHINFO_EXTENSION);
-        $new_filename = time() . '_' . uniqid() . '.' . $file_extension;
-        $target_file = $target_dir . $new_filename;
-
-        if (move_uploaded_file($_FILES["edit_img"]["tmp_name"], $target_file)) {
-            $old_path = $old_img ? upload_disk_path($old_img['image_url']) : null;
-            if ($old_path && file_exists($old_path)) {
-                @unlink($old_path);
-            }
-            $stmt = $conn->prepare("UPDATE products SET name = ?, price = ?, stock = ?, image_url = ? WHERE id = ?");
-            $stmt->execute([$name, $price, $stock, upload_url($new_filename), $prod_id]);
+        $old_path = $old_img ? upload_disk_path($old_img['image_url']) : null;
+        if ($old_path && file_exists($old_path)) {
+            @unlink($old_path);
         }
+        $stmt = $conn->prepare("UPDATE products SET name = ?, price = ?, stock = ?, image_url = ? WHERE id = ?");
+        $stmt->execute([$name, $price, $stock, $new_image, $prod_id]);
     } else {
         $stmt = $conn->prepare("UPDATE products SET name = ?, price = ?, stock = ? WHERE id = ?");
         $stmt->execute([$name, $price, $stock, $prod_id]);
@@ -151,11 +168,43 @@ if (isset($_POST['delete_all_sales'])) {
 if (isset($_POST['update_status'])) {
     $sale_id = intval($_POST['sale_id']);
     $new_status = in_array($_POST['status'] ?? '', ['Paid', 'Unpaid', 'Void'], true) ? $_POST['status'] : 'Paid';
-    
-    $stmt = $conn->prepare("UPDATE sales SET status = ? WHERE id = ?");
-    $stmt->execute([$new_status, $sale_id]);
-    
-    if (function_exists('updateMasterExcelFile')) { updateMasterExcelFile($conn); }
+
+    $cur = $conn->prepare("SELECT status FROM sales WHERE id = ?");
+    $cur->execute([$sale_id]);
+    $old_status = $cur->fetchColumn();
+
+    try {
+        $conn->beginTransaction();
+        $items = $conn->prepare("SELECT si.product_id, si.qty, COALESCE(si.item_name, p.name) AS name, p.stock
+                                 FROM sale_items si LEFT JOIN products p ON p.id = si.product_id
+                                 WHERE si.sale_id = ? AND si.product_id > 0");
+        $items->execute([$sale_id]);
+        $rows = $items->fetchAll(PDO::FETCH_ASSOC);
+
+        if ($old_status !== 'Void' && $new_status === 'Void') {
+            // Voided sale: put the items back on the shelf
+            $back = $conn->prepare("UPDATE products SET stock = stock + ? WHERE id = ?");
+            foreach ($rows as $r) $back->execute([$r['qty'], $r['product_id']]);
+        } elseif ($old_status === 'Void' && $new_status !== 'Void') {
+            // Un-voiding: take the items out of stock again, if there is enough
+            $take = $conn->prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?");
+            foreach ($rows as $r) {
+                $take->execute([$r['qty'], $r['product_id'], $r['qty']]);
+                if ($take->rowCount() === 0 && $r['stock'] !== null) {
+                    throw new RuntimeException("Not enough stock of {$r['name']} to restore this sale.");
+                }
+            }
+        }
+
+        $conn->prepare("UPDATE sales SET status = ? WHERE id = ?")->execute([$new_status, $sale_id]);
+        $conn->commit();
+    } catch (RuntimeException $ex) {
+        $conn->rollBack();
+        header("Location: sales.php?error=" . urlencode($ex->getMessage()));
+        exit();
+    }
+
+    updateMasterExcelFile($conn);
     header("Location: sales.php?updated=1");
     exit();
 }
@@ -195,12 +244,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_sale'])) {
                     throw new RuntimeException("Not enough stock for {$product['name']} (only {$product['stock']} left).");
                 }
                 $price = (float) $product['price'];
+                $itemName = $product['name'];
             } else {
                 // Day pass: the price is entered at the counter
                 $price = max(0, floatval($item['price'] ?? 0));
+                $itemName = 'Day Pass';
             }
 
-            $lines[] = [$id, $qty, $price];
+            $lines[] = [$id, $qty, $price, $itemName];
             $total += $price * $qty;
         }
 
@@ -212,9 +263,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_sale'])) {
         $stmt->execute([$customer_name, round($total, 2), $payment_method]);
         $sale_id = $conn->lastInsertId();
 
-        $ins = $conn->prepare("INSERT INTO sale_items (sale_id, product_id, qty, price) VALUES (?, ?, ?, ?)");
-        foreach ($lines as [$id, $qty, $price]) {
-            $ins->execute([$sale_id, $id, $qty, $price]);
+        $ins = $conn->prepare("INSERT INTO sale_items (sale_id, product_id, qty, price, item_name) VALUES (?, ?, ?, ?, ?)");
+        foreach ($lines as [$id, $qty, $price, $itemName]) {
+            $ins->execute([$sale_id, $id, $qty, $price, $itemName]);
         }
 
         // Walk-in day passes count as gym visits
@@ -297,6 +348,9 @@ $history_rows = $conn->query("$historySql ORDER BY date_recorded DESC LIMIT $per
         .modal-content { background: #141414; margin: 6% auto; padding: 25px; width: 90%; max-width: 420px; border-radius: 16px; color: #ffffff; border: 1px solid #262626; text-align: center; }
         .modal-content input { width: 100%; padding: 10px; margin: 6px 0 12px 0; background: #0a0a0a; border: 1px solid #262626; border-radius: 8px; color: white; }
         .history-wrap { overflow-x: auto; }
+        .flash { padding: 12px 15px; border-radius: 8px; margin-bottom: 20px; font-weight: 600; font-size: 0.9rem; }
+        .flash-success { background: rgba(34, 197, 94, 0.12); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); }
+        .flash-error { background: rgba(220, 38, 38, 0.12); color: #f87171; border: 1px solid rgba(220, 38, 38, 0.35); }
         @media (max-width: 1000px) {
             .sales-grid { grid-template-columns: 1fr; }
             .page-header { flex-wrap: wrap; gap: 12px; }
@@ -312,6 +366,23 @@ $history_rows = $conn->query("$historySql ORDER BY date_recorded DESC LIMIT $per
 <?php include __DIR__ . '/../includes/nav.php'; ?>
 
 <div class="container-wide">
+    <?php
+    $flash = [
+        'success' => 'Product added.',
+        'updated_product' => 'Product updated.',
+        'deleted' => 'Product deleted.',
+        'sale_deleted' => 'Sale deleted.',
+        'all_deleted' => 'All POS history deleted.',
+        'updated' => 'Sale status updated.',
+    ];
+    foreach ($flash as $key => $text):
+        if (isset($_GET[$key])): ?>
+            <div class="flash flash-success"><?php echo e($text); ?></div>
+        <?php endif;
+    endforeach;
+    if (!empty($_GET['error'])): ?>
+        <div class="flash flash-error"><?php echo e($_GET['error']); ?></div>
+    <?php endif; ?>
     <div class="page-header">
         <h2 style="border-left: 4px solid #dc2626; padding-left: 12px; margin:0;">Point of Sale</h2>
         <div style="display: flex; gap: 10px;">
@@ -460,11 +531,11 @@ $history_rows = $conn->query("$historySql ORDER BY date_recorded DESC LIMIT $per
             <label style="text-align:left; display:block; color:#a3a3a3; font-size:0.8rem;">Name</label>
             <input type="text" name="pname" required>
             <label style="text-align:left; display:block; color:#a3a3a3; font-size:0.8rem;">Price</label>
-            <input type="number" name="pprice" step="0.01" required>
+            <input type="number" name="pprice" step="0.01" min="0" required>
             <label style="text-align:left; display:block; color:#a3a3a3; font-size:0.8rem;">Stock</label>
-            <input type="number" name="pstock" required>
+            <input type="number" name="pstock" step="1" min="0" required>
             <label style="text-align:left; display:block; color:#a3a3a3; font-size:0.8rem;">Image</label>
-            <input type="file" name="pimg" accept="image/*" style="border:none;">
+            <input type="file" name="pimg" accept="image/jpeg,image/png,image/gif,image/webp" style="border:none;">
             <button type="submit" name="add_product" class="btn-checkout" style="margin-top:15px;">Save</button>
             <button type="button" onclick="closeModal('productModal')" style="width:100%; background:none; border:none; margin-top:10px; color:#737373; cursor:pointer;">Cancel</button>
         </form>
@@ -481,13 +552,13 @@ $history_rows = $conn->query("$historySql ORDER BY date_recorded DESC LIMIT $per
             <input type="text" name="edit_name" id="editProdName" required>
             
             <label style="text-align:left; display:block; color:#a3a3a3; font-size:0.8rem;">Price (₱)</label>
-            <input type="number" name="edit_price" id="editProdPrice" step="0.01" required>
+            <input type="number" name="edit_price" id="editProdPrice" step="0.01" min="0" required>
             
             <label style="text-align:left; display:block; color:#a3a3a3; font-size:0.8rem;">Stock Quantity</label>
-            <input type="number" name="edit_stock" id="editProdStock" required min="0">
+            <input type="number" name="edit_stock" id="editProdStock" step="1" required min="0">
             
             <label style="text-align:left; display:block; color:#a3a3a3; font-size:0.8rem;">Replace Image (Optional)</label>
-            <input type="file" name="edit_img" accept="image/*" style="border:none;">
+            <input type="file" name="edit_img" accept="image/jpeg,image/png,image/gif,image/webp" style="border:none;">
             
             <button type="submit" name="update_product" class="btn-checkout" style="background:#2563eb; margin-top:15px;">Save Changes</button>
             <button type="button" onclick="closeModal('editProductModal')" style="width:100%; background:none; border:none; margin-top:10px; color:#737373; cursor:pointer;">Cancel</button>

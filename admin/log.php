@@ -10,6 +10,7 @@ if (!$id) {
 }
 
 $success = false;
+$renewalRecorded = false;
 $error = "";
 
 try {
@@ -28,7 +29,8 @@ try {
         $contact = trim($_POST['contact'] ?? '');
         $address = trim($_POST['address'] ?? '');
         $expiry = $_POST['expiryDate'] ?? '';
-        $tier = $_POST['tier'] ?? 'Standard';
+        $tier = strtoupper(trim($_POST['tier'] ?? 'GYM USE - REGULAR'));
+        $isRenewal = !empty($_POST['record_renewal']);
         $baseRate = floatval($_POST['baseRate'] ?? 0);
         $discountAmount = floatval($_POST['discountAmount'] ?? 0);
 
@@ -59,7 +61,15 @@ try {
                 $id
             ]);
 
+            // A renewal is new money received, so it counts as revenue
+            if ($isRenewal) {
+                $months = max(1, intval($_POST['renewal_months'] ?? 1));
+                record_membership_payment($conn, $id, $newName, $finalRate,
+                    "Renewal - $tier ($months month" . ($months > 1 ? 's' : '') . ")");
+            }
+
             $success = true;
+            $renewalRecorded = $isRenewal;
             $member['name'] = $newName;
             $member['contact'] = $contact;
             $member['address'] = $address;
@@ -334,7 +344,7 @@ try {
         <h2 class="form-title">Edit Member Profile</h2>
 
         <?php if ($success): ?>
-            <div class="success-msg">Member record updated successfully!
+            <div class="success-msg">Member record updated successfully!<?php if ($renewalRecorded): ?> Renewal payment recorded.<?php endif; ?>
                 <a href="/member_profile.php?id=<?php echo urlencode($id); ?>" style="color:#86efac; display:block; margin-top:6px;">🖨 View / reprint QR card →</a>
             </div>
         <?php endif; ?>
@@ -364,25 +374,18 @@ try {
 
             <div class="form-group">
                 <label>Membership Tier</label>
-                <input type="hidden" name="tier" id="tierInput" value="<?php echo htmlspecialchars($member['tier'] ?? 'Gym Use - Regular'); ?>">
+                <input type="hidden" name="tier" id="tierInput" value="<?php echo htmlspecialchars(strtoupper($member['tier'] ?? 'GYM USE - REGULAR')); ?>">
                 
                 <div class="tier-options">
                     <?php 
-                    $tiers = [
-                        'Gym Use - Regular' => 900,
-                        'Gym Use - Student' => 700,
-                        'Supervision - Regular' => 1500,
-                        'Supervision - Student' => 1200,
-                        '1-on-1 Coaching - Regular' => 3000,
-                        '1-on-1 Coaching - Student' => 2500,
-                    ];
-                    $currentTier = $member['tier'] ?? 'Gym Use - Regular';
-                    
-                    foreach ($tiers as $tierName => $rate): 
+                    $currentTier = strtoupper($member['tier'] ?? 'GYM USE - REGULAR');
+                    $currentMonthlyRate = MEMBERSHIP_TIERS[$currentTier] ?? ($member['base_rate'] ?? 900);
+
+                    foreach (MEMBERSHIP_TIERS as $tierName => $rate): 
                         $isActive = ($currentTier === $tierName) ? 'active' : '';
                     ?>
                         <div class="tier-card <?php echo $isActive; ?>" onclick="selectTier('<?php echo $tierName; ?>', <?php echo $rate; ?>, this)">
-                            <strong><?php echo $tierName; ?></strong>
+                            <strong><?php echo ucwords(strtolower($tierName)); ?></strong>
                             <span>₱<?php echo number_format($rate); ?> / mo</span>
                         </div>
                     <?php endforeach; ?>
@@ -392,12 +395,12 @@ try {
             <div class="form-row">
                 <div class="form-group">
                     <label for="baseRate">Base Rate (₱)</label>
-                    <input type="number" step="0.01" name="baseRate" id="baseRate" class="form-control" value="<?php echo htmlspecialchars($member['base_rate'] ?? '900.00'); ?>" data-monthly-rate="<?php echo htmlspecialchars($member['base_rate'] ?? '900.00'); ?>" oninput="calculateTotal()" required>
+                    <input type="number" step="0.01" name="baseRate" id="baseRate" class="form-control" value="<?php echo htmlspecialchars($member['base_rate'] ?? '900.00'); ?>" data-monthly-rate="<?php echo htmlspecialchars($currentMonthlyRate); ?>" oninput="updateTotal()" required>
                 </div>
 
                 <div class="form-group">
                     <label for="discountAmount">Discount Amount (₱)</label>
-                    <input type="number" step="0.01" name="discountAmount" id="discountAmount" class="form-control" value="<?php echo htmlspecialchars($member['discount_amount'] ?? '0.00'); ?>" min="0" oninput="calculateTotal()">
+                    <input type="number" step="0.01" name="discountAmount" id="discountAmount" class="form-control" value="<?php echo htmlspecialchars($member['discount_amount'] ?? '0.00'); ?>" min="0" oninput="updateTotal()">
                 </div>
             </div>
 
@@ -424,6 +427,12 @@ try {
                 </div>
             </div>
 
+            <input type="hidden" name="renewal_months" id="renewalMonths" value="0">
+            <label id="renewalOption" style="display:none; align-items:center; gap:8px; margin: 10px 0; color:#d4d4d4; font-size:0.9rem; cursor:pointer;">
+                <input type="checkbox" name="record_renewal" id="recordRenewal" value="1" style="width:auto;">
+                Record this as a renewal payment (counts as revenue today)
+            </label>
+
             <div class="summary-box">
                 <div><span>Selected Tier:</span> <span id="summaryTier" style="color:#fff;"><?php echo htmlspecialchars($member['tier'] ?? 'Standard'); ?></span></div>
                 <div><span>Updated Expiry:</span> <span id="summaryExpiry" style="color:#fff;"><?php echo htmlspecialchars($member['expiry_date'] ?? '-'); ?></span></div>
@@ -442,7 +451,10 @@ try {
 </div>
 
 <script>
-    let addedMonths = 1;
+    let addedMonths = 0;
+    // Extensions always count from the saved expiry (or today, if already expired),
+    // so clicking several duration buttons doesn't stack months.
+    const originalExpiry = <?php echo json_encode($member['expiry_date'] ?? ''); ?>;
 
     const contactInput = document.getElementById("contact");
     if (contactInput) {
@@ -453,25 +465,27 @@ try {
 
     function selectTier(tierName, defaultRate, element) {
         document.getElementById("tierInput").value = tierName;
-        const baseInput = document.getElementById("baseRate");
-        baseInput.dataset.monthlyRate = defaultRate;
-        
+        document.getElementById("baseRate").dataset.monthlyRate = defaultRate;
+
         document.querySelectorAll(".tier-card").forEach(card => card.classList.remove("active"));
         element.classList.add("active");
-        
+
         document.getElementById("summaryTier").innerText = tierName;
-        calculateTotal();
+        recalculateBase();
     }
 
-    function calculateTotal() {
+    // Base rate = monthly rate x months being added (only when renewing)
+    function recalculateBase() {
         const baseInput = document.getElementById("baseRate");
-        const monthlyRate = parseFloat(baseInput.dataset.monthlyRate || baseInput.value) || 0;
-        
-        const calculatedBase = monthlyRate * addedMonths;
-        baseInput.value = calculatedBase.toFixed(2);
+        const monthlyRate = parseFloat(baseInput.dataset.monthlyRate) || 0;
+        baseInput.value = (monthlyRate * Math.max(1, addedMonths)).toFixed(2);
+        updateTotal();
+    }
 
+    function updateTotal() {
+        const base = parseFloat(document.getElementById("baseRate").value) || 0;
         const discountAmt = parseFloat(document.getElementById("discountAmount").value) || 0;
-        const total = Math.max(0, calculatedBase - discountAmt);
+        const total = Math.max(0, base - discountAmt);
         document.getElementById("summaryTotal").innerText = "₱" + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
@@ -479,28 +493,33 @@ try {
         return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
     }
 
+    function toIsoDate(date) {
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    }
+
     function addExpiryMonths(months, button) {
         addedMonths = months;
-        const expiryInput = document.getElementById("expiryDate");
-        let currentDate = expiryInput.value ? new Date(expiryInput.value + "T00:00:00") : new Date();
-        
-        currentDate.setMonth(currentDate.getMonth() + months);
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        let start = originalExpiry ? new Date(originalExpiry + "T00:00:00") : today;
+        if (start < today) start = today;
 
-        const year = currentDate.getFullYear();
-        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-        const day = String(currentDate.getDate()).padStart(2, '0');
-
-        expiryInput.value = `${year}-${month}-${day}`;
+        const newExpiry = new Date(start);
+        newExpiry.setMonth(newExpiry.getMonth() + months);
+        document.getElementById("expiryDate").value = toIsoDate(newExpiry);
 
         document.querySelectorAll(".duration-btn").forEach(btn => btn.classList.remove("active"));
         button.classList.add("active");
+        document.getElementById("summaryExpiry").innerText = formatDate(newExpiry);
 
-        document.getElementById("summaryExpiry").innerText = formatDate(currentDate);
-        calculateTotal();
+        // Renewing: offer to record the payment (checked by default)
+        document.getElementById("renewalMonths").value = months;
+        document.getElementById("renewalOption").style.display = "flex";
+        document.getElementById("recordRenewal").checked = true;
+        recalculateBase();
     }
 
     window.addEventListener("load", function () {
-        calculateTotal();
+        updateTotal();
         const expiryVal = document.getElementById("expiryDate").value;
         if (expiryVal) {
             document.getElementById("summaryExpiry").innerText = formatDate(new Date(expiryVal + "T00:00:00"));

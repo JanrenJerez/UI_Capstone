@@ -14,7 +14,13 @@ try {
     )");
 } catch (PDOException $e) {}
 
-$message = "";
+$message = (string) ($_GET['msg'] ?? '');
+
+// Accept only a real YYYY-MM-DD date; anything else becomes today
+function valid_date_or_today($value) {
+    $d = DateTime::createFromFormat('Y-m-d', (string) $value);
+    return ($d && $d->format('Y-m-d') === $value) ? $value : date('Y-m-d');
+}
 $error = "";
 
 // Handle Form Submission for Expenses & Salaries
@@ -23,7 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $category = trim($_POST['category'] ?? '');
         $description = trim($_POST['description'] ?? '');
         $amount = floatval($_POST['amount'] ?? 0);
-        $expense_date = $_POST['expense_date'] ?? date('Y-m-d');
+        $expense_date = valid_date_or_today($_POST['expense_date'] ?? '');
 
         if (!empty($category) && $amount > 0) {
             $stmt = $pdo->prepare("INSERT INTO expenses (category, description, amount, expense_date) VALUES (?, ?, ?, ?)");
@@ -38,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (isset($_POST['add_salary'])) {
         $employee_name = trim($_POST['employee_name'] ?? '');
         $salary_amount = floatval($_POST['salary_amount'] ?? 0);
-        $expense_date = $_POST['expense_date'] ?? date('Y-m-d');
+        $expense_date = valid_date_or_today($_POST['expense_date'] ?? '');
 
         if (!empty($employee_name) && $salary_amount > 0) {
             $stmt = $pdo->prepare("INSERT INTO expenses (category, description, amount, expense_date) VALUES (?, ?, ?, ?)");
@@ -55,6 +61,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->prepare("DELETE FROM expenses WHERE id = ?")->execute([$delId]);
         $message = "Record deleted successfully.";
     }
+}
+
+// After a successful save, redirect so refreshing the page doesn't submit the form again
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $message !== '' && $error === '') {
+    header('Location: expenses.php?msg=' . urlencode($message));
+    exit();
 }
 
 // Fetch Staff List for the Dropdown
@@ -160,7 +172,7 @@ try {
                 <input type="text" name="description" placeholder="e.g., Monthly bill payment">
 
                 <label>Amount (₱)</label>
-                <input type="number" name="amount" step="100" min="0.00" required placeholder="0.00">
+                <input type="number" name="amount" step="0.01" min="0.01" required placeholder="0.00">
 
                 <label>Date</label>
                 <input type="date" name="expense_date" value="<?php echo date('Y-m-d'); ?>" required>
@@ -192,7 +204,7 @@ try {
                 <?php endif; ?>
 
                 <label>Salary Amount (₱)</label>
-                <input type="number" name="salary_amount" step="100" min="0.00" required placeholder="0.00">
+                <input type="number" name="salary_amount" step="0.01" min="0.01" required placeholder="0.00">
 
                 <label>Payout Date</label>
                 <input type="date" name="expense_date" value="<?php echo date('Y-m-d'); ?>" required>

@@ -15,7 +15,7 @@ try {
     // handle error
 }
 
-$message = "";
+$message = (string) ($_GET['msg'] ?? '');
 $error = "";
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -51,6 +51,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->prepare("DELETE FROM staff WHERE id = ?")->execute([$delId]);
         $message = "Staff member removed successfully.";
     }
+}
+
+// After a successful save, redirect so refreshing the page doesn't submit the form again
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $message !== '' && $error === '') {
+    header('Location: staff.php?msg=' . urlencode($message));
+    exit();
 }
 
 // Fetch Staff List

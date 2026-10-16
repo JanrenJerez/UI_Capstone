@@ -55,15 +55,15 @@ function render_pagination($totalRows, $perPage, $page) {
     return $html;
 }
 
-// SQL for the combined POS + membership history (used by dashboard, POS page and exports)
-function sales_history_sql($salesWhere = '', $membersWhere = '') {
+// SQL for the combined POS + membership payment history (used by dashboard, POS page and exports)
+function sales_history_sql($salesWhere = '', $paymentsWhere = '') {
     return "
         SELECT
             s.id AS transaction_id,
             'POS' AS source_type,
             s.customer_name,
             s.sale_date AS date_recorded,
-            GROUP_CONCAT(COALESCE(p.name, 'Day Pass') || ' (' || si.qty || ')', ', ') AS items_list,
+            GROUP_CONCAT(COALESCE(si.item_name, p.name, 'Item') || ' (' || si.qty || ')', ', ') AS items_list,
             s.amount,
             s.payment_method,
             s.status
@@ -74,17 +74,34 @@ function sales_history_sql($salesWhere = '', $membersWhere = '') {
         GROUP BY s.id
         UNION ALL
         SELECT
-            m.id AS transaction_id,
+            mp.id AS transaction_id,
             'MEMBERSHIP' AS source_type,
-            COALESCE(m.name, 'Gym Member') AS customer_name,
-            m.created_at AS date_recorded,
-            'Gym Membership (' || COALESCE(NULLIF(m.tier, ''), NULLIF(m.membership_type, ''), 'Standard') || ')' AS items_list,
-            m.final_rate AS amount,
+            COALESCE(mp.member_name, 'Gym Member') AS customer_name,
+            mp.paid_at AS date_recorded,
+            'Gym Membership (' || COALESCE(NULLIF(mp.description, ''), 'Standard') || ')' AS items_list,
+            mp.amount,
             'Cash' AS payment_method,
             'Paid' AS status
-        FROM members m
-        WHERE 1=1 $membersWhere";
+        FROM membership_payments mp
+        WHERE 1=1 $paymentsWhere";
 }
+
+// Record money received for a membership (new registration or renewal)
+function record_membership_payment(PDO $pdo, $memberId, $memberName, $amount, $description) {
+    $pdo->prepare("INSERT INTO membership_payments (member_id, member_name, amount, description, paid_at)
+                   VALUES (?, ?, ?, ?, datetime('now', 'localtime'))")
+        ->execute([$memberId, $memberName, $amount, $description]);
+}
+
+// Monthly rates for each tier (keys match members.tier, which is stored uppercase)
+const MEMBERSHIP_TIERS = [
+    'GYM USE - REGULAR' => 900,
+    'GYM USE - STUDENT' => 700,
+    'SUPERVISION - REGULAR' => 1500,
+    'SUPERVISION - STUDENT' => 1200,
+    '1-ON-1 COACHING - REGULAR' => 3000,
+    '1-ON-1 COACHING - STUDENT' => 2500,
+];
 
 // Delete a member together with their attendance rows (the FK has no ON DELETE CASCADE)
 function delete_member(PDO $pdo, $memberId) {

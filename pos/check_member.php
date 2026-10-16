@@ -33,6 +33,18 @@ try {
             exit;
         }
 
+        // One check-in per member per day; a second scan just welcomes them back
+        $already = $conn->prepare("SELECT COUNT(*) FROM attendance WHERE member_id = ? AND DATE(scan_time) = DATE('now', 'localtime')");
+        $already->execute([$member_id]);
+        if ($already->fetchColumn() > 0) {
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'Already checked in today.',
+                'member_name' => $member_name . ' (already checked in)'
+            ]);
+            exit;
+        }
+
         $log_stmt = $conn->prepare("INSERT INTO attendance (member_id, scan_time) VALUES (?, datetime('now', 'localtime'))");
         
         if ($log_stmt->execute([$member_id])) {
