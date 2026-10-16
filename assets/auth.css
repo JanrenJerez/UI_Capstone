@@ -1,0 +1,76 @@
+/* Shared styling for the lock screen and PIN / password recovery pages */
+* { box-sizing: border-box; }
+body {
+    background: #0a0a0a;
+    color: #ffffff;
+    font-family: 'Segoe UI', sans-serif;
+    margin: 0;
+    background-image: linear-gradient(rgba(10, 10, 10, 0.88), rgba(10, 10, 10, 0.3)), url('/assets/gym.jpg');
+    background-size: cover;
+    background-attachment: fixed;
+    background-position: center;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.glass-card {
+    background: rgba(18, 18, 18, 0.95);
+    backdrop-filter: blur(10px);
+    padding: 35px;
+    border-radius: 16px;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
+    width: 100%;
+    max-width: 420px;
+    text-align: center;
+    border: 1px solid #262626;
+}
+.brand { color: #ff0000; font-weight: 900; font-size: 1.4rem; letter-spacing: 1px; margin-bottom: 18px; }
+.brand img { height: 2em; vertical-align: middle; margin-left: 6px; }
+.page-title {
+    color: #ffffff;
+    background: #dc2626;
+    display: inline-block;
+    padding: 8px 20px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    font-weight: 800;
+    margin: 0 0 20px;
+    font-size: 1.1rem;
+}
+.hint { color: #a3a3a3; font-size: 0.85rem; margin: 0 0 20px; }
+label { display: block; text-align: left; color: #a3a3a3; font-size: 0.8rem; margin-top: 6px; }
+input {
+    width: 100%;
+    padding: 12px;
+    margin: 6px 0 12px;
+    background: #0a0a0a;
+    border: 1px solid #262626;
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+}
+input:focus { border-color: #dc2626; outline: none; }
+input.pin-input { font-size: 1.6rem; text-align: center; letter-spacing: 10px; }
+.btn-action {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    background: #dc2626;
+    border: none;
+    border-radius: 10px;
+    color: #ffffff;
+    font-weight: bold;
+    cursor: pointer;
+    text-transform: uppercase;
+    font-size: 0.95rem;
+    text-decoration: none;
+}
+.btn-action:hover { background: #b91c1c; }
+.msg-error, .msg-success { margin-bottom: 15px; font-size: 0.85rem; font-weight: bold; padding: 8px; border-radius: 6px; }
+.msg-error { color: #ef4444; background: #450a0a; border: 1px solid #7f1d1d; }
+.msg-success { color: #22c55e; background: #052e16; border: 1px solid #14532d; }
+.links { margin-top: 20px; display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; }
+.links a { color: #a3a3a3; font-size: 0.8rem; text-decoration: none; font-weight: bold; }
+.links a:hover { color: #fff; }

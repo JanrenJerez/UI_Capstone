@@ -1,7 +1,8 @@
 <?php
 header('Content-Type: application/json');
-session_start();
 include __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+require_unlocked();
 
 if (!isset($_POST['qr_id']) || trim($_POST['qr_id']) === '') {
     echo json_encode(['status' => 'error', 'message' => 'No ID detected.']);

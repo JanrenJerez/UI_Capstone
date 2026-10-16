@@ -1,4 +1,6 @@
 <?php
+date_default_timezone_set('Asia/Manila');
+
 // In the packaged app, Electron passes USER_DATA_PATH so the DB lives in a writable,
 // reinstall-safe folder. In dev, fall back to the bundled database/gym.db.
 $userDataPath = getenv('USER_DATA_PATH');
@@ -14,7 +16,14 @@ try {
     // Define BOTH so it works whether your code looks for $pdo or $conn
     $conn = $pdo;
 
+    require_once __DIR__ . '/migrate.php';
+    run_migrations($pdo);
+
 } catch (PDOException $e) {
-    die("Database Connection Failed: " . $e->getMessage());
+    error_log("Database connection failed: " . $e->getMessage());
+    http_response_code(500);
+    die("Database connection failed. Please restart the app.");
 }
+
+require_once __DIR__ . '/helpers.php';
 ?>

@@ -1,139 +1,140 @@
 <?php
-session_start();
 include __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+require_unlocked();
 
 $error = "";
 $successMsg = "";
 $newMemberCreated = false;
 $registeredData = [];
+$qrMember = null; // member whose QR is shown after an import or edit
 
-if (isset($_GET['delete_id'])) {
-    $stmt = $pdo->prepare("DELETE FROM members WHERE id = ?");
-    $stmt->execute([$_GET['delete_id']]);
-    header("Location: manage.php");
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['delete_member_id'])) {
+    delete_member($pdo, intval($_POST['delete_member_id']));
+    header("Location: manage.php?deleted=1");
     exit();
 }
 
-if ($_SERVER["REQUEST_METHOD"] === "POST") {
-    
-    if (isset($_POST['edit_member_id']) && !empty($_POST['edit_member_id'])) {
-        $id = $_POST['edit_member_id'];
-        $newName = trim($_POST['memberName'] ?? '');
-        $contact = trim($_POST['contact'] ?? '');
-        $address = trim($_POST['address'] ?? '');
-        $expiry = $_POST['expiryDate'] ?? '';
-        $tier = $_POST['tier'] ?? 'Standard';
-        $baseRate = floatval($_POST['baseRate'] ?? 0);
-        $discountAmount = floatval($_POST['discountAmount'] ?? 0);
-        $finalRate = max(0, $baseRate - $discountAmount);
+// Shared validation for the register, legacy import and edit forms
+function read_member_form($uppercase) {
+    $name = trim($_POST['memberName'] ?? '');
+    $address = trim($_POST['address'] ?? '');
+    $tier = $_POST['tier'] ?? 'GYM USE - REGULAR';
+    if ($uppercase) {
+        $name = strtoupper($name);
+        $address = strtoupper($address);
+        $tier = strtoupper($tier);
+    }
+    $baseRate = floatval($_POST['baseRate'] ?? 0);
+    $discountAmount = floatval($_POST['discountAmount'] ?? 0);
+    return [
+        'name' => $name,
+        'contact' => trim($_POST['contact'] ?? ''),
+        'address' => $address,
+        'expiry_date' => $_POST['expiryDate'] ?? '',
+        'tier' => $tier,
+        'base_rate' => $baseRate,
+        'discount_amount' => $discountAmount,
+        'final_rate' => max(0, $baseRate - $discountAmount),
+    ];
+}
 
-        if (!preg_match('/^[0-9]{11}$/', $contact)) {
-            $error = "Contact number must contain exactly 11 digits.";
-        } elseif (empty($newName) || empty($address) || empty($expiry)) {
-            $error = "Please fill in all required fields.";
-        } else {
+function member_form_error($m) {
+    if (!preg_match('/^[0-9]{11}$/', $m['contact'])) return "CONTACT NUMBER MUST CONTAIN EXACTLY 11 DIGITS.";
+    if ($m['name'] === '' || $m['address'] === '' || $m['expiry_date'] === '') return "PLEASE FILL IN ALL REQUIRED FIELDS.";
+    return '';
+}
+
+function insert_member(PDO $pdo, array $m) {
+    $m['qr_id'] = generate_qr_id($pdo);
+    $stmt = $pdo->prepare("
+        INSERT INTO members
+        (qr_id, name, contact, address, expiry_date, tier, membership_type, base_rate, discount_amount, final_rate, created_at)
+        VALUES (:qr_id, :name, :contact, :address, :expiry_date, :tier, :tier, :base_rate, :discount_amount, :final_rate, datetime('now', 'localtime'))
+    ");
+    $stmt->execute($m);
+    $m['id'] = $pdo->lastInsertId();
+    return $m;
+}
+
+if ($_SERVER["REQUEST_METHOD"] === "POST" && !isset($_POST['delete_member_id'])) {
+
+    if (!empty($_POST['edit_member_id'])) {
+        $id = intval($_POST['edit_member_id']);
+        $m = read_member_form(false);
+        $error = member_form_error($m);
+
+        if (!$error) {
             try {
                 $updateStmt = $pdo->prepare("
-                    UPDATE members 
-                    SET name = ?, contact = ?, address = ?, expiry_date = ?, tier = ?, base_rate = ?, discount_amount = ?, final_rate = ?
+                    UPDATE members
+                    SET name = ?, contact = ?, address = ?, expiry_date = ?, tier = ?, membership_type = ?, base_rate = ?, discount_amount = ?, final_rate = ?
                     WHERE id = ?
                 ");
                 $updateStmt->execute([
-                    $newName, $contact, $address, $expiry, $tier, $baseRate, $discountAmount, $finalRate, $id
+                    $m['name'], $m['contact'], $m['address'], $m['expiry_date'], $m['tier'], $m['tier'],
+                    $m['base_rate'], $m['discount_amount'], $m['final_rate'], $id
                 ]);
                 $successMsg = "Member record updated successfully!";
+
+                $q = $pdo->prepare("SELECT id, name, qr_id, tier, expiry_date FROM members WHERE id = ?");
+                $q->execute([$id]);
+                $qrMember = $q->fetch(PDO::FETCH_ASSOC);
             } catch (PDOException $e) {
-                $error = "Database error: " . $e->getMessage();
+                error_log("Member update failed: " . $e->getMessage());
+                $error = "Could not save the member. Please try again.";
             }
         }
-    } elseif (isset($_POST['form_type']) && $_POST['form_type'] === 'legacy') {
-        $newName = strtoupper(trim($_POST['memberName'] ?? ''));
-        $contact = trim($_POST['contact'] ?? '');
-        $address = strtoupper(trim($_POST['address'] ?? ''));
-        $expiry = $_POST['expiryDate'] ?? '';
-        $tier = strtoupper($_POST['tier'] ?? 'GYM USE - REGULAR');
-        $baseRate = floatval($_POST['baseRate'] ?? 0);
-        $discountAmount = floatval($_POST['discountAmount'] ?? 0);
-        $finalRate = max(0, $baseRate - $discountAmount);
+    } elseif (($_POST['form_type'] ?? '') === 'legacy') {
+        $m = read_member_form(true);
+        $error = member_form_error($m);
 
-        if (!preg_match('/^[0-9]{11}$/', $contact)) {
-            $error = "CONTACT NUMBER MUST CONTAIN EXACTLY 11 DIGITS.";
-        } elseif (empty($newName) || empty($address) || empty($expiry)) {
-            $error = "PLEASE FILL IN ALL REQUIRED FIELDS.";
-        } else {
+        if (!$error) {
             try {
-                $stmt = $pdo->prepare("
-                    INSERT INTO members
-                    (name, contact, address, expiry_date, tier, base_rate, discount_amount, final_rate)
-                    VALUES (:name, :contact, :address, :expiry_date, :tier, :base_rate, :discount_amount, :final_rate)
-                ");
-
-                $stmt->execute([
-                    'name' => $newName,
-                    'contact' => $contact,
-                    'address' => $address,
-                    'expiry_date' => $expiry,
-                    'tier' => $tier,
-                    'base_rate' => $baseRate,
-                    'discount_amount' => $discountAmount,
-                    'final_rate' => $finalRate
-                ]);
-
+                $qrMember = insert_member($pdo, $m);
                 $successMsg = "Existing member successfully imported into the system!";
             } catch (PDOException $e) {
-                $error = "Database Error: " . $e->getMessage();
+                error_log("Legacy import failed: " . $e->getMessage());
+                $error = "Could not save the member. Please try again.";
             }
         }
     } else {
-        $newName = strtoupper(trim($_POST['memberName'] ?? ''));
-        $contact = trim($_POST['contact'] ?? '');
-        $address = strtoupper(trim($_POST['address'] ?? ''));
-        $expiry = $_POST['expiryDate'] ?? '';
-        $tier = strtoupper($_POST['tier'] ?? 'GYM USE - REGULAR');
-        $baseRate = floatval($_POST['baseRate'] ?? 0);
-        $discountAmount = floatval($_POST['discountAmount'] ?? 0);
-        $finalRate = max(0, $baseRate - $discountAmount);
+        $m = read_member_form(true);
+        $error = member_form_error($m);
 
-        if (!preg_match('/^[0-9]{11}$/', $contact)) {
-            $error = "CONTACT NUMBER MUST CONTAIN EXACTLY 11 DIGITS.";
-        } elseif (empty($newName) || empty($address) || empty($expiry)) {
-            $error = "PLEASE FILL IN ALL REQUIRED FIELDS.";
-        } else {
+        if (!$error) {
             try {
-                $stmt = $pdo->prepare("
-                    INSERT INTO members
-                    (name, contact, address, expiry_date, tier, base_rate, discount_amount, final_rate)
-                    VALUES (:name, :contact, :address, :expiry_date, :tier, :base_rate, :discount_amount, :final_rate)
-                ");
-
-                $stmt->execute([
-                    'name' => $newName,
-                    'contact' => $contact,
-                    'address' => $address,
-                    'expiry_date' => $expiry,
-                    'tier' => $tier,
-                    'base_rate' => $baseRate,
-                    'discount_amount' => $discountAmount,
-                    'final_rate' => $finalRate
-                ]);
-
+                $registeredData = insert_member($pdo, $m);
                 $newMemberCreated = true;
-                $registeredData = [
-                    'name' => $newName,
-                    'tier' => $tier,
-                    'base_rate' => $baseRate,
-                    'discount_amount' => $discountAmount,
-                    'final_rate' => $finalRate,
-                    'expiry' => $expiry
-                ];
             } catch (PDOException $e) {
-                $error = "Database Error: " . $e->getMessage();
+                error_log("Registration failed: " . $e->getMessage());
+                $error = "Could not save the member. Please try again.";
             }
         }
     }
 }
 
-$stmt = $pdo->query("SELECT * FROM members");
+if (isset($_GET['deleted'])) {
+    $successMsg = "Member deleted.";
+}
+
+// Member list: server-side search + pagination
+$search = trim($_GET['q'] ?? '');
+$perPage = 20;
+$page = current_page();
+$where = '';
+$params = [];
+if ($search !== '') {
+    $where = "WHERE name LIKE :q OR contact LIKE :q OR address LIKE :q OR qr_id LIKE :q OR tier LIKE :q OR CAST(id AS TEXT) = :exact";
+    $params = ['q' => '%' . $search . '%', 'exact' => ltrim($search, '#')];
+}
+$countStmt = $pdo->prepare("SELECT COUNT(*) FROM members $where");
+$countStmt->execute($params);
+$memberTotal = (int) $countStmt->fetchColumn();
+
+$offset = ($page - 1) * $perPage;
+$stmt = $pdo->prepare("SELECT * FROM members $where ORDER BY id DESC LIMIT $perPage OFFSET $offset");
+$stmt->execute($params);
 $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -142,6 +143,7 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Member Management Dashboard | Project E</title>
+    <script src="/assets/vendor/qrcode.min.js"></script>
     
     <style>
         * { box-sizing: border-box; }
@@ -153,7 +155,7 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
             margin: 0;
             background-image:
                 linear-gradient(rgba(10, 10, 10, 0.92), rgba(10, 10, 10, 0.92)),
-                url('../assets/gym.jpg');
+                url('/assets/gym.jpg');
             background-repeat: no-repeat;
             background-attachment: fixed;
             background-size: cover;
@@ -460,6 +462,16 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
         @media (max-width: 600px) {
             .form-row, .tier-options, .expiry-options { grid-template-columns: 1fr; }
         }
+        .qr-box { background: #fff; padding: 14px; border-radius: 12px; display: inline-block; margin: 10px auto; }
+        .qr-id-text { font-family: monospace; color: #a3a3a3; letter-spacing: 1px; font-size: 0.85rem; }
+        .btn-qr { background: #16a34a; }
+        .search-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; width: 100%; }
+        .search-form #searchInput { flex: 1; min-width: 200px; }
+        @media print {
+            body.printing-qr .container-wide, body.printing-qr .pe-nav { display: none !important; }
+            body.printing-qr #qrModal { position: static; display: block !important; background: white; }
+            body.printing-qr #qrModal .no-print { display: none !important; }
+        }
     </style>
 </head>
 <body>
@@ -493,8 +505,13 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <div class="detail-row"><span>BASE RATE:</span><span>₱<?php echo number_format($registeredData['base_rate'], 2); ?></span></div>
                         <div class="detail-row"><span>DISCOUNT:</span><span>₱<?php echo number_format($registeredData['discount_amount'], 2); ?></span></div>
                         <div class="detail-row"><span>TOTAL PAID:</span><span style="color: #22c55e;">₱<?php echo number_format($registeredData['final_rate'], 2); ?></span></div>
-                        <div class="detail-row"><span>EXPIRY DATE:</span><span><?php echo htmlspecialchars($registeredData['expiry']); ?></span></div>
+                        <div class="detail-row"><span>EXPIRY DATE:</span><span><?php echo htmlspecialchars($registeredData['expiry_date']); ?></span></div>
                     </div>
+                    <p style="color:#a3a3a3; font-size:0.85rem; margin: 0;">Member QR code (scan this at the front desk):</p>
+                    <div class="qr-box"><div id="newMemberQr"></div></div>
+                    <div class="qr-id-text"><?php echo e($registeredData['qr_id']); ?></div>
+                    <br>
+                    <a href="/member_profile.php?id=<?php echo $registeredData['id']; ?>" class="btn-action btn-qr">🖨 Open / Print QR Card</a>
                     <br>
                     <button class="btn-action" onclick="window.location.href='manage.php'">+ Register Another Member</button>
                 </div>
@@ -667,7 +684,11 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <?php endif; ?>
 
         <div class="table-controls">
-            <input type="text" id="searchInput" placeholder="Search by name, contact, address..." onkeyup="filterMembers()">
+            <form method="GET" class="search-form no-print">
+                <input type="text" id="searchInput" name="q" value="<?php echo e($search); ?>" placeholder="Search by name, contact, address, QR id or #ID...">
+                <button type="submit" class="btn-action">Search</button>
+                <?php if ($search !== ''): ?><a href="manage.php" class="btn-action btn-secondary">Clear</a><?php endif; ?>
+            </form>
         </div>
 
         <div class="table-responsive">
@@ -701,15 +722,23 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             </td>
                             <td class="no-print">
                                 <div class="action-group">
-                                    <button onclick='openEditModal(<?php echo json_encode($row); ?>)' class="btn-action">Edit</button>
-                                    <a href="manage.php?delete_id=<?php echo $row['id']; ?>" onclick="return confirm('Are you sure you want to delete this member?')" class="btn-action btn-delete">Delete</a>
+                                    <a href="/member_profile.php?id=<?php echo $row['id']; ?>" class="btn-action btn-qr">QR</a>
+                                    <button onclick="openEditModal(<?php echo e(json_encode($row)); ?>)" class="btn-action">Edit</button>
+                                    <form method="POST" style="display:inline; margin:0;" onsubmit="return confirm('Are you sure you want to delete this member? Their attendance history will also be removed.');">
+                                        <input type="hidden" name="delete_member_id" value="<?php echo $row['id']; ?>">
+                                        <button type="submit" class="btn-action btn-delete">Delete</button>
+                                    </form>
                                 </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>
+                    <?php if (!$members): ?>
+                        <tr><td colspan="7" style="text-align:center; padding: 30px; color:#737373;"><?php echo $search !== '' ? 'No members match your search.' : 'No members yet.'; ?></td></tr>
+                    <?php endif; ?>
                 </tbody>
             </table>
         </div>
+        <?php echo render_pagination($memberTotal, $perPage, $page); ?>
     </div>
 </div>
 
@@ -787,7 +816,35 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 </div>
 
+<?php if ($qrMember): ?>
+<div id="qrModal" class="modal-overlay" style="display:flex;">
+    <div class="modal-card" style="text-align:center; max-width: 420px;">
+        <button class="close-modal no-print" onclick="document.getElementById('qrModal').style.display='none'">&times;</button>
+        <h2 class="page-title no-print" style="font-size: 1.2rem; margin-bottom: 10px;">Member QR Code</h2>
+        <p class="no-print" style="color:#a3a3a3; font-size:0.85rem;">Print a new card if the member's details changed.</p>
+        <div class="qr-box"><div id="savedMemberQr"></div></div>
+        <h3 style="margin: 8px 0 4px;"><?php echo e($qrMember['name']); ?></h3>
+        <div class="qr-id-text"><?php echo e($qrMember['qr_id']); ?></div>
+        <div class="qr-id-text">Valid until <?php echo e(date('M d, Y', strtotime($qrMember['expiry_date']))); ?></div>
+        <button type="button" class="btn-action btn-qr no-print" style="width:100%; margin-top:18px; padding: 12px;" onclick="printQrCard()">🖨 Print QR Card</button>
+    </div>
+</div>
+<?php endif; ?>
+
 <script>
+    function makeQr(elementId, text) {
+        const el = document.getElementById(elementId);
+        if (el && text) new QRCode(el, { text: text, width: 180, height: 180, colorDark: "#0f172a" });
+    }
+    makeQr('newMemberQr', <?php echo json_encode($registeredData['qr_id'] ?? null); ?>);
+    makeQr('savedMemberQr', <?php echo json_encode($qrMember['qr_id'] ?? null); ?>);
+
+    function printQrCard() {
+        document.body.classList.add('printing-qr');
+        window.print();
+        document.body.classList.remove('printing-qr');
+    }
+
     let selectedMonths = 1;
     let selectedMonthlyRate = 900;
 
@@ -889,14 +946,6 @@ $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
             setRegExpiry(1, document.querySelector('.duration-btn'));
         }
     });
-
-    function filterMembers() {
-        let input = document.getElementById("searchInput").value.toLowerCase();
-        let rows = document.querySelectorAll("#memberList tr");
-        rows.forEach(row => {
-            row.style.display = row.textContent.toLowerCase().includes(input) ? "" : "none";
-        });
-    }
 
     function openEditModal(member) {
         document.getElementById("modalMemberId").value = member.id;

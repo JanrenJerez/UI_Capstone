@@ -50,7 +50,9 @@ function setupUserData() {
 
 function startPhpServer(userDataPath) {
     const phpBinary = getPhpBinary();
-    const args = ['-S', `${PHP_HOST}:${PHP_PORT}`, '-t', app.getAppPath()];
+    const docRoot = app.getAppPath();
+    // router.php blocks direct access to the database and internal files
+    const args = ['-S', `${PHP_HOST}:${PHP_PORT}`, '-t', docRoot, path.join(docRoot, 'router.php')];
 
     // Only force our php.ini when using the bundled Windows binary
     if (phpBinary !== 'php') {
@@ -58,7 +60,7 @@ function startPhpServer(userDataPath) {
     }
 
     phpServer = cp.spawn(phpBinary, args, {
-        cwd: app.getAppPath(),
+        cwd: docRoot,
         env: { ...process.env, USER_DATA_PATH: userDataPath },
         windowsHide: true
     });

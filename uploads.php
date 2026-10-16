@@ -1,5 +1,8 @@
 <?php
 // Serves uploaded product images from the writable upload folder.
+include __DIR__ . '/includes/db.php';
+require_once __DIR__ . '/includes/auth.php';
+require_unlocked();
 include __DIR__ . '/includes/upload_paths.php';
 
 $name = basename($_GET['f'] ?? '');

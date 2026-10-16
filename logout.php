@@ -1,8 +1,8 @@
 <?php
-session_start();
-session_unset();
-session_destroy();
+// "Lock" the app: drop the unlocked state and go back to the PIN screen.
+require_once __DIR__ . '/includes/db.php';
+require_once __DIR__ . '/includes/auth.php';
 
-echo "<script>sessionStorage.clear(); window.location.href='index.php';</script>";
+lock_app();
+header('Location: /lock.php');
 exit();
-?>

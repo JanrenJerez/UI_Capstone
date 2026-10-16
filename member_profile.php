@@ -1,34 +1,32 @@
 <?php
-session_start();
-include __DIR__ . '/includes/db.php';
-include __DIR__ . '/includes/nav.php'; 
+require_once __DIR__ . '/includes/db.php';
+require_once __DIR__ . '/includes/auth.php';
+require_unlocked();
 
-if (!isset($_GET['id'])) {
-    header("Location: dashboard.php");
+$id = intval($_GET['id'] ?? 0);
+
+$stmt = $conn->prepare("SELECT * FROM members WHERE id = ?");
+$stmt->execute([$id]);
+$member = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if (!$member) {
+    header("Location: /admin/manage.php");
     exit();
 }
 
-$id = $_GET['id'];
+$isExpired = $member['expiry_date'] < date('Y-m-d');
 
-try {
-    $stmt = $conn->prepare("SELECT * FROM members WHERE id = ?");
-    $stmt->execute([$id]);
-    $member = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$member) { 
-        die("Member not found."); 
-    }
-} catch (PDOException $e) {
-    die("Database error: " . $e->getMessage());
-}
+$attStmt = $conn->prepare("SELECT scan_time FROM attendance WHERE member_id = ? ORDER BY scan_time DESC LIMIT 5");
+$attStmt->execute([$id]);
+$attendanceLogs = $attStmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title><?php echo htmlspecialchars($member['name'] ?? ''); ?> | Profile</title>
-    <script src="assets/vendor/qrcode.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo e($member['name']); ?> | Profile</title>
+    <script src="/assets/vendor/qrcode.min.js"></script>
     <style>
         body { background: #0f172a; color: white; font-family: 'Segoe UI', sans-serif; margin: 0; }
         .profile-container { max-width: 900px; margin: 50px auto; display: grid; grid-template-columns: 1fr 2fr; gap: 20px; padding: 0 20px; }
@@ -42,22 +40,32 @@ try {
         .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: bold; }
         .badge-active { background: #dcfce7; color: #166534; }
         .badge-expired { background: #fee2e2; color: #991b1b; }
+        .btn { display: block; text-decoration: none; margin-top: 12px; padding: 10px; border-radius: 8px; font-weight: bold; border: none; width: 100%; cursor: pointer; font-size: 0.95rem; }
+        .btn-update { background: #38bdf8; color: #0f172a; }
+        .btn-print { background: #0f172a; color: #fff; }
+        .qr-code-text { font-family: monospace; color: #64748b; font-size: 0.85rem; letter-spacing: 1px; }
+        @media (max-width: 700px) {
+            .profile-container { grid-template-columns: 1fr; margin: 25px auto; }
+        }
+        @media print {
+            .pe-nav, .history-card, .no-print { display: none !important; }
+            body { background: white; }
+            .profile-container { display: block; margin: 0; }
+            .glass-card { box-shadow: none; }
+        }
     </style>
 </head>
 <body>
+<?php include __DIR__ . '/includes/nav.php'; ?>
 
 <div class="profile-container">
     <div class="glass-card">
-        <div id="qrcode" style="display: flex; justify-content: center; margin-bottom: 20px;"></div>
-        <h2 style="margin: 10px 0;"><?php echo htmlspecialchars($member['name'] ?? ''); ?></h2>
-        <p style="color: #64748b; font-size: 0.9rem;">ID: <?php echo htmlspecialchars($member['id'] ?? ''); ?></p>
-        
-        <?php 
-        $isExpired = strtotime($member['expiry_date']) < time();
-        $statusClass = $isExpired ? 'badge-expired' : 'badge-active';
-        $statusText = $isExpired ? 'EXPIRED' : 'ACTIVE';
-        ?>
-        <span class="badge <?php echo $statusClass; ?>"><?php echo $statusText; ?></span>
+        <div id="qrcode" style="display: flex; justify-content: center; margin-bottom: 10px;"></div>
+        <div class="qr-code-text"><?php echo e($member['qr_id']); ?></div>
+        <h2 style="margin: 10px 0;"><?php echo e($member['name']); ?></h2>
+        <p style="color: #64748b; font-size: 0.9rem;">Member #<?php echo e($member['id']); ?> · <?php echo e($member['tier']); ?></p>
+
+        <span class="badge <?php echo $isExpired ? 'badge-expired' : 'badge-active'; ?>"><?php echo $isExpired ? 'EXPIRED' : 'ACTIVE'; ?></span>
 
         <div class="stats-grid">
             <div class="stat-box">
@@ -66,29 +74,25 @@ try {
             </div>
             <div class="stat-box">
                 <small>Join Date</small>
-                <span><?php echo date('M d, Y', strtotime($member['created_at'] ?? 'now')); ?></span>
+                <span><?php echo $member['created_at'] ? date('M d, Y', strtotime($member['created_at'])) : '-'; ?></span>
             </div>
         </div>
-        <a href="edit_members.php?id=<?php echo $member['id']; ?>" class="btn-update" style="display:block; text-decoration:none; margin-top:20px; background:#38bdf8; color:#0f172a; padding:10px; border-radius:8px; font-weight:bold;">Update Membership</a>
+        <button type="button" class="btn btn-print no-print" onclick="window.print()">🖨 Print QR Card</button>
+        <a href="/admin/log.php?id=<?php echo $member['id']; ?>" class="btn btn-update no-print">Update Membership</a>
     </div>
 
     <div class="history-card">
         <h3 style="color: #38bdf8; margin-top: 0;">Recent Activity</h3>
         <p style="color: #94a3b8; font-size: 0.85rem;">Member check-in history</p>
-        
-        <?php
-        $attStmt = $conn->prepare("SELECT scan_time FROM attendance WHERE member_id = ? ORDER BY scan_time DESC LIMIT 5");
-        $attStmt->execute([$id]);
-        $attendanceLogs = $attStmt->fetchAll(PDO::FETCH_ASSOC);
 
-        if (!empty($attendanceLogs)):
-            foreach($attendanceLogs as $row): ?>
+        <?php if (!empty($attendanceLogs)): ?>
+            <?php foreach ($attendanceLogs as $row): ?>
                 <div class="history-item">
                     <span>Check-in Recorded</span>
                     <span style="color: #38bdf8;"><?php echo date('M d, g:i A', strtotime($row['scan_time'])); ?></span>
                 </div>
-            <?php endforeach;
-        else: ?>
+            <?php endforeach; ?>
+        <?php else: ?>
             <div class="history-item">
                 <span style="color: #94a3b8;">No recent activity</span>
             </div>
@@ -98,8 +102,8 @@ try {
 
 <script>
     new QRCode(document.getElementById("qrcode"), {
-        text: "<?php echo $member['qr_code']; ?>",
-        width: 150, height: 150, colorDark : "#0f172a"
+        text: <?php echo json_encode($member['qr_id']); ?>,
+        width: 180, height: 180, colorDark: "#0f172a"
     });
 </script>
 </body>

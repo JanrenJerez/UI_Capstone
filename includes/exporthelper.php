@@ -1,42 +1,40 @@
 <?php
-function updateMasterExcelFile($conn) {
-    $dir = __DIR__ . '/../exports';
-    if (!is_dir($dir)) {
-        mkdir($dir, 0777, true);
-    }
-    
-    $filePath = $dir . '/sales_report.csv';
-    $file = fopen($filePath, 'w');
-    
-    fputs($file, "\xEF\xBB\xBF");
+// Sales report export (POS sales + membership payments), shared by the
+// download button and the auto-saved master copy.
 
-    fputcsv($file, ['ID', 'Customer Name', 'Date', 'Items Bought', 'Amount', 'Payment', 'Status']);
-    
-    // Updated query for SQLite syntax (using datetime() and group_concat without SEPARATOR)
-    $query = "SELECT s.id, s.customer_name, 
-                     datetime(s.sale_date, 'localtime') as formatted_date, 
-                     group_concat(COALESCE(p.name, 'Day Pass') || ' (' || si.qty || ')', ', ') as items_list,
-                     s.amount, s.payment_method, s.status
-              FROM sales s 
-              LEFT JOIN sale_items si ON s.id = si.sale_id 
-              LEFT JOIN products p ON si.product_id = p.id
-              GROUP BY s.id 
-              ORDER BY s.id DESC";
-             
-    $res = $conn->query($query);
-    
-    // Fixed fetch method for PDO
+// Folder for auto-saved exports: AppData in the packaged app, exports/ in dev
+function export_dir() {
+    $base = getenv('USER_DATA_PATH');
+    $dir = $base ? $base . DIRECTORY_SEPARATOR . 'exports' : __DIR__ . '/../exports';
+    if (!is_dir($dir)) mkdir($dir, 0777, true);
+    return $dir;
+}
+
+// Write the full sales report as CSV (UTF-8 with BOM so Excel shows ₱ and names correctly)
+function write_sales_report_csv($conn, $handle) {
+    fputs($handle, "\xEF\xBB\xBF");
+    fputcsv($handle, ['ID', 'Type', 'Customer Name', 'Date', 'Items Bought / Description', 'Amount', 'Payment', 'Status']);
+
+    $res = $conn->query(sales_history_sql() . " ORDER BY date_recorded DESC");
     while ($r = $res->fetch(PDO::FETCH_ASSOC)) {
-        fputcsv($file, [
-            '#' . $r['id'],
+        fputcsv($handle, [
+            '#' . $r['transaction_id'],
+            $r['source_type'] === 'MEMBERSHIP' ? 'Membership' : 'POS',
             $r['customer_name'],
-            $r['formatted_date'],
+            $r['date_recorded'],
             $r['items_list'],
-            $r['amount'],
+            number_format((float) $r['amount'], 2, '.', ''),
             $r['payment_method'],
-            $r['status']
+            $r['status'],
         ]);
     }
+}
+
+// Keep an always-current copy at exports/sales_report.csv
+function updateMasterExcelFile($conn) {
+    $file = @fopen(export_dir() . '/sales_report.csv', 'w');
+    if (!$file) return; // e.g. the file is open in Excel; skip quietly
+    write_sales_report_csv($conn, $file);
     fclose($file);
 }
 ?>

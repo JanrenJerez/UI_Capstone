@@ -1,6 +1,7 @@
 <?php
-session_start();
 include __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/auth.php';
+require_unlocked();
 
 if (!isset($conn) && isset($pdo)) {
     $conn = $pdo;
@@ -26,49 +27,14 @@ if (!$hasPayment) {
     $conn->exec("ALTER TABLE sales ADD COLUMN payment_method VARCHAR(50) DEFAULT 'Cash'");
 }
 
-if (isset($_GET['export']) && ($_GET['export'] === 'excel' || $_GET['export'] === 'xlsx')) {
-    if (function_exists('updateMasterExcelFile')) {
-        updateMasterExcelFile($conn);
-    }
+if (isset($_GET['export'])) {
+    updateMasterExcelFile($conn);
 
-    // Updated headers for .xlsx format
-    header("Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    header("Content-Disposition: attachment; filename=sales_report.xlsx");
-    
-    $export_query = "
-        SELECT 
-            s.id AS transaction_id, 
-            'POS' AS source_type,
-            s.customer_name, 
-            DATE(s.sale_date) AS date_recorded, 
-            GROUP_CONCAT(COALESCE(p.name, 'Day Pass') || ' (' || si.qty || ')', ', ') AS items_list,
-            s.amount, 
-            s.payment_method, 
-            s.status
-        FROM sales s 
-        LEFT JOIN sale_items si ON s.id = si.sale_id 
-        LEFT JOIN products p ON si.product_id = p.id
-        GROUP BY s.id 
-        UNION ALL
-        SELECT 
-            m.id AS transaction_id, 
-            'MEMBERSHIP' AS source_type,
-            COALESCE(m.name, 'Gym Member') AS customer_name, 
-            DATE(m.created_at) AS date_recorded, 
-            'Gym Membership (' || COALESCE(m.membership_type, 'Standard') || ')' AS items_list,
-            m.final_rate AS amount, 
-            'Cash' AS payment_method, 
-            'Paid' AS status
-        FROM members m
-        ORDER BY date_recorded DESC";
-        
-    $res = $conn->query($export_query);
-
-    echo "ID\tSource Type\tCustomer Name\tDate\tItems Bought / Description\tAmount\tPayment\tStatus\n";
-    while ($r = $res->fetch(PDO::FETCH_ASSOC)) {
-        $typeTag = ($r['source_type'] === 'MEMBERSHIP') ? '[MEMBER]' : '[POS]';
-        echo "#{$r['transaction_id']}\t{$typeTag}\t{$r['customer_name']}\t{$r['date_recorded']}\t{$r['items_list']}\t{$r['amount']}\t{$r['payment_method']}\t{$r['status']}\n";
-    }
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="sales_report_' . date('Y-m-d') . '.csv"');
+    $out = fopen('php://output', 'w');
+    write_sales_report_csv($conn, $out);
+    fclose($out);
     exit();
 }
 
@@ -164,6 +130,7 @@ if (isset($_POST['delete_sale'])) {
     
     $stmt1 = $conn->prepare("DELETE FROM sale_items WHERE sale_id = ?");
     $stmt1->execute([$sale_id]);
+    $conn->prepare("DELETE FROM walkin_visits WHERE sale_id = ?")->execute([$sale_id]);
     
     $stmt2 = $conn->prepare("DELETE FROM sales WHERE id = ?");
     $stmt2->execute([$sale_id]);
@@ -183,7 +150,7 @@ if (isset($_POST['delete_all_sales'])) {
 
 if (isset($_POST['update_status'])) {
     $sale_id = intval($_POST['sale_id']);
-    $new_status = $_POST['status'];
+    $new_status = in_array($_POST['status'] ?? '', ['Paid', 'Unpaid', 'Void'], true) ? $_POST['status'] : 'Paid';
     
     $stmt = $conn->prepare("UPDATE sales SET status = ? WHERE id = ?");
     $stmt->execute([$new_status, $sale_id]);
@@ -194,79 +161,93 @@ if (isset($_POST['update_status'])) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_sale'])) {
-    $total = floatval($_POST['total_amount']);
-    $payment_method = isset($_POST['payment_method']) ? $_POST['payment_method'] : 'Cash';
-    $customer_name = !empty($_POST['customer_name']) ? $_POST['customer_name'] : 'Walk-in Guest';
-    $status = 'Paid';
-    $items = json_decode($_POST['items_json'], true);
-    
-    $stmt = $conn->prepare("INSERT INTO sales (customer_name, amount, status, payment_method, sale_date) VALUES (?, ?, ?, ?, datetime('now'))");
-    $insert_sale = $stmt->execute([$customer_name, $total, $status, $payment_method]);
-    
-    if (!$insert_sale) {
-        echo "DB Error (Sales)";
+    $payment_method = ($_POST['payment_method'] ?? '') === 'GCash' ? 'GCash' : 'Cash';
+    $customer_name = trim($_POST['customer_name'] ?? '') !== '' ? trim($_POST['customer_name']) : 'Walk-in Guest';
+    $is_day_pass = !empty($_POST['day_pass']);
+    $items = json_decode($_POST['items_json'] ?? '[]', true);
+
+    if (!is_array($items) || count($items) === 0) {
+        echo "Cart is empty.";
         exit;
     }
-    
-    $sale_id = $conn->lastInsertId();
-    
-    foreach ($items as $item) {
-        $id = intval($item['id']);
-        $qty = intval($item['qty']);
-        $price = floatval($item['price']);
-        
-        if ($id > 0) {
-            $upd = $conn->prepare("UPDATE products SET stock = stock - ? WHERE id = ?");
-            $upd->execute([$qty, $id]);
+
+    try {
+        $conn->beginTransaction();
+        $lines = [];
+        $total = 0;
+        $getProduct = $conn->prepare("SELECT name, price, stock FROM products WHERE id = ?");
+        $takeStock = $conn->prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?");
+
+        foreach ($items as $item) {
+            $id = intval($item['id'] ?? 0);
+            $qty = intval($item['qty'] ?? 0);
+            if ($qty <= 0) continue;
+
+            if ($id > 0) {
+                // Products: use the database price and make sure there is enough stock
+                $getProduct->execute([$id]);
+                $product = $getProduct->fetch(PDO::FETCH_ASSOC);
+                if (!$product) {
+                    throw new RuntimeException("A product in the cart no longer exists. Please refresh the page.");
+                }
+                $takeStock->execute([$qty, $id, $qty]);
+                if ($takeStock->rowCount() === 0) {
+                    throw new RuntimeException("Not enough stock for {$product['name']} (only {$product['stock']} left).");
+                }
+                $price = (float) $product['price'];
+            } else {
+                // Day pass: the price is entered at the counter
+                $price = max(0, floatval($item['price'] ?? 0));
+            }
+
+            $lines[] = [$id, $qty, $price];
+            $total += $price * $qty;
         }
+
+        if (!$lines) {
+            throw new RuntimeException("Cart is empty.");
+        }
+
+        $stmt = $conn->prepare("INSERT INTO sales (customer_name, amount, status, payment_method, sale_date) VALUES (?, ?, 'Paid', ?, datetime('now', 'localtime'))");
+        $stmt->execute([$customer_name, round($total, 2), $payment_method]);
+        $sale_id = $conn->lastInsertId();
+
         $ins = $conn->prepare("INSERT INTO sale_items (sale_id, product_id, qty, price) VALUES (?, ?, ?, ?)");
-        $ins->execute([$sale_id, $id, $qty, $price]);
+        foreach ($lines as [$id, $qty, $price]) {
+            $ins->execute([$sale_id, $id, $qty, $price]);
+        }
+
+        // Walk-in day passes count as gym visits
+        if ($is_day_pass) {
+            $conn->prepare("INSERT INTO walkin_visits (sale_id, customer_name, visit_time) VALUES (?, ?, datetime('now', 'localtime'))")
+                ->execute([$sale_id, $customer_name]);
+        }
+
+        $conn->commit();
+    } catch (RuntimeException $ex) {
+        $conn->rollBack();
+        echo $ex->getMessage();
+        exit;
+    } catch (PDOException $ex) {
+        $conn->rollBack();
+        error_log("Sale failed: " . $ex->getMessage());
+        echo "Could not save the sale. Please try again.";
+        exit;
     }
 
-    if (function_exists('updateMasterExcelFile')) {
-        updateMasterExcelFile($conn);
-    }
-
+    updateMasterExcelFile($conn);
     echo "success";
     exit;
 }
 
 $products_res = $conn->query("SELECT * FROM products ORDER BY id DESC");
 
-$history_query = "
-    SELECT 
-        s.id AS transaction_id, 
-        'POS' AS source_type,
-        s.customer_name, 
-        s.sale_date AS date_recorded, 
-        GROUP_CONCAT(COALESCE(p.name, 'Day Pass') || ' (' || si.qty || ')', ', ') AS items_list,
-        s.amount, 
-        s.payment_method, 
-        s.status
-    FROM sales s 
-    LEFT JOIN sale_items si ON s.id = si.sale_id 
-    LEFT JOIN products p ON si.product_id = p.id
-    GROUP BY s.id 
-
-    UNION ALL
-
-    SELECT 
-        m.id AS transaction_id, 
-        'MEMBERSHIP' AS source_type,
-        COALESCE(m.name, 'Gym Member') AS customer_name, 
-        m.created_at AS date_recorded, 
-        'Gym Membership (' || COALESCE(m.membership_type, 'Standard') || ')' AS items_list,
-        m.final_rate AS amount, 
-        'Cash' AS payment_method, 
-        'Paid' AS status
-    FROM members m
-
-    ORDER BY date_recorded DESC";
-
-$history_result = $conn->query($history_query);
-if (!$history_result) {
-    die("SQL Error"); 
-}
+$perPage = 25;
+$page = current_page();
+$historySql = sales_history_sql();
+$historyTotal = (int) $conn->query("SELECT COUNT(*) FROM ($historySql)")->fetchColumn();
+$offset = ($page - 1) * $perPage;
+$history_rows = $conn->query("$historySql ORDER BY date_recorded DESC LIMIT $perPage OFFSET $offset")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <!DOCTYPE html>
@@ -275,12 +256,12 @@ if (!$history_result) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>POS & Sales History | Project E</title>
-    <link rel="stylesheet" href="../assets/style.css">
+    <link rel="stylesheet" href="/assets/style.css">
     <style>
         * { box-sizing: border-box; }
         body { 
             background: #0d0d0d; color: #ffffff; font-family: 'Inter', 'Segoe UI', sans-serif; margin: 0;
-            background-image: linear-gradient(rgba(10, 10, 10, 0.3), rgba(15, 15, 15, 0.1)), url('../assets/gym.jpg');
+            background-image: linear-gradient(rgba(10, 10, 10, 0.3), rgba(15, 15, 15, 0.1)), url('/assets/gym.jpg');
             background-size: cover; background-attachment: fixed; min-height: 100vh;
         }
         .container-wide { max-width: 1280px; margin: 0 auto; padding: 40px 20px; }
@@ -315,6 +296,15 @@ if (!$history_result) {
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(6px); }
         .modal-content { background: #141414; margin: 6% auto; padding: 25px; width: 90%; max-width: 420px; border-radius: 16px; color: #ffffff; border: 1px solid #262626; text-align: center; }
         .modal-content input { width: 100%; padding: 10px; margin: 6px 0 12px 0; background: #0a0a0a; border: 1px solid #262626; border-radius: 8px; color: white; }
+        .history-wrap { overflow-x: auto; }
+        @media (max-width: 1000px) {
+            .sales-grid { grid-template-columns: 1fr; }
+            .page-header { flex-wrap: wrap; gap: 12px; }
+        }
+        @media (max-width: 600px) {
+            .container-wide { padding: 24px 12px; }
+            .history-table th, .history-table td { padding: 10px 8px; font-size: 0.8rem; }
+        }
     </style>
 </head>
 <body>
@@ -325,7 +315,7 @@ if (!$history_result) {
     <div class="page-header">
         <h2 style="border-left: 4px solid #dc2626; padding-left: 12px; margin:0;">Point of Sale</h2>
         <div style="display: flex; gap: 10px;">
-            <a href="../pos/sales.php?export=excel" style="padding: 10px 18px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem;">📊 Export Financial Report</a>
+            <a href="/pos/sales.php?export=csv" style="padding: 10px 18px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem;">📊 Export Financial Report</a>
             <button onclick="openModal('productModal')" class="btn-add">+ New Product</button>
         </div>
     </div>
@@ -335,18 +325,18 @@ if (!$history_result) {
             <h3>Inventory</h3>
             <div class="product-grid">
                 <?php while($p = $products_res->fetch(PDO::FETCH_ASSOC)): ?>
-                    <div class="product-card" onclick='addToCart(<?php echo json_encode($p); ?>)'>
+                    <div class="product-card" onclick="addToCart(<?php echo e(json_encode(['id' => (int) $p['id'], 'name' => $p['name'], 'price' => (float) $p['price'], 'stock' => (int) $p['stock']])); ?>)">
                         <form method="POST" style="margin: 0;" onsubmit="return confirm('Delete this product?');">
                             <input type="hidden" name="delete_id" value="<?php echo $p['id']; ?>">
                             <button type="submit" name="delete_product" class="delete-btn" onclick="event.stopPropagation();">&times;</button>
                         </form>
-                        <img src="<?php echo htmlspecialchars(upload_src($p['image_url'] ?? '')); ?>" alt="product">
+                        <img src="<?php echo e(upload_src($p['image_url'] ?? '')); ?>" alt="product" onerror="this.onerror=null; this.src='/assets/logo.jpg';">
                         <div style="padding: 10px;">
-                            <h4 style="margin: 0; font-size: 0.85rem; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><?php echo $p['name']; ?></h4>
+                            <h4 style="margin: 0; font-size: 0.85rem; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><?php echo e($p['name']); ?></h4>
                             <p style="color: #ef4444; font-weight: 700; margin: 4px 0 2px 0;">₱<?php echo number_format($p['price'], 2); ?></p>
                             <small style="color: #737373;">Stock: <?php echo $p['stock']; ?></small>
                             <div>
-                                <button type="button" class="btn-edit-prod" onclick="event.stopPropagation(); openEditProductModal(<?php echo $p['id']; ?>, '<?php echo addslashes($p['name']); ?>', <?php echo $p['price']; ?>, <?php echo $p['stock']; ?>)">Edit Details</button>
+                                <button type="button" class="btn-edit-prod" onclick="event.stopPropagation(); openEditProductModal(<?php echo e(json_encode(['id' => (int) $p['id'], 'name' => $p['name'], 'price' => (float) $p['price'], 'stock' => (int) $p['stock']])); ?>)">Edit Details</button>
                             </div>
                         </div>
                     </div>
@@ -384,7 +374,7 @@ if (!$history_result) {
         </div>
     </div>
 
-    <div class="glass-card" style="padding: 0; overflow: hidden;">
+    <div class="glass-card history-wrap" style="padding: 0;">
         <table class="history-table">
             <thead>
                 <tr>
@@ -399,10 +389,7 @@ if (!$history_result) {
                 </tr>
             </thead>
             <tbody>
-                <?php 
-                $history_rows = $history_result->fetchAll(PDO::FETCH_ASSOC);
-                if (count($history_rows) > 0): 
-                ?>
+                <?php if (count($history_rows) > 0): ?>
                     <?php foreach($history_rows as $row): ?>
                     <?php 
                         $current_status = $row['status'] ?? 'Paid'; 
@@ -462,6 +449,7 @@ if (!$history_result) {
                 <?php endif; ?>
             </tbody>
         </table>
+        <?php echo render_pagination($historyTotal, $perPage, $page); ?>
     </div>
 </div>
 
@@ -525,7 +513,7 @@ if (!$history_result) {
         <h3>Scan GCash QR</h3>
         <p>Amount: <b style="color:#ef4444;">₱<span id="gcashAmount">0.00</span></b></p>
         <div style="background: white; padding: 15px; border-radius: 12px; display: inline-block; margin-bottom: 15px;">
-            <img src="../assets/gcash.jpg" style="width: 200px; height: 200px; object-fit: contain; display: block;">
+            <img src="/assets/gcash.jpg" style="width: 200px; height: 200px; object-fit: contain; display: block;">
         </div>
         <button class="btn-checkout" style="background:#007dfe;" id="gcashConfirmBtn" onclick="confirmGcashPayment()">Confirm Payment</button>
         <button type="button" onclick="closeActiveGcashModal()" style="width:100%; background:none; border:none; margin-top:10px; color:#737373; cursor:pointer;">Cancel</button>
@@ -539,11 +527,11 @@ if (!$history_result) {
     function openModal(id) { document.getElementById(id).style.display = 'block'; }
     function closeModal(id) { document.getElementById(id).style.display = 'none'; }
     
-    function openEditProductModal(id, name, price, stock) {
-        document.getElementById('editProdId').value = id;
-        document.getElementById('editProdName').value = name;
-        document.getElementById('editProdPrice').value = price;
-        document.getElementById('editProdStock').value = stock;
+    function openEditProductModal(p) {
+        document.getElementById('editProdId').value = p.id;
+        document.getElementById('editProdName').value = p.name;
+        document.getElementById('editProdPrice').value = p.price;
+        document.getElementById('editProdStock').value = p.stock;
         openModal('editProductModal');
     }
 
@@ -598,7 +586,7 @@ if (!$history_result) {
         formData.append('payment_method', paymentMethod);
         formData.append('customer_name', customerName + ' (Day Pass)');
         formData.append('items_json', JSON.stringify(dayPassItem));
-
+        formData.append('day_pass', '1');
         fetch('sales.php', { method: 'POST', body: formData })
         .then(res => res.text())
         .then(data => {
@@ -606,15 +594,19 @@ if (!$history_result) {
                 alert("Day Pass (" + calculatedQty + "x) issued successfully via " + paymentMethod + "!");
                 setTimeout(() => location.reload(), 500);
             } else {
-                alert("Transaction failed.");
+                alert(data.trim() || "Transaction failed.");
             }
-        });
+        })
+        .catch(() => alert("Transaction failed. Please try again."));
     }
 
     function addToCart(p) {
         if (p.stock <= 0) return alert("Out of stock");
         let item = cart.find(x => x.id === p.id);
-        if (item) { if(item.qty < p.stock) item.qty++; } 
+ if (item) {
+            if (item.qty < item.stock) item.qty++;
+            else alert("Only " + item.stock + " " + item.name + " in stock.");
+        }
         else { cart.push({...p, qty: 1}); }
         renderCart();
     }
@@ -625,11 +617,11 @@ if (!$history_result) {
         container.innerHTML = cart.map((item, idx) => {
             let sub = item.price * item.qty; total += sub;
             return `<div class="cart-item-row">
-                <div><b>${item.name}</b><br><small style="color:#737373;">₱${item.price}</small></div>
+                <div><b>${escapeHtml(item.name)}</b><br><small style="color:#737373;">₱${item.price.toFixed(2)}</small></div>
                 <div class="qty-controls">
                     <button class="qty-btn" onclick="cart[${idx}].qty > 1 ? cart[${idx}].qty-- : cart.splice(${idx},1); renderCart();">-</button>
                     <span class="qty-display">${item.qty}</span>
-                    <button class="qty-btn" onclick="cart[${idx}].qty++; renderCart();">+</button>
+                    <button class="qty-btn" onclick="increaseQty(${idx})">+</button>
                 </div>
                 <div>₱${sub.toFixed(2)}</div>
             </div>`;
@@ -637,7 +629,19 @@ if (!$history_result) {
         document.getElementById('totalDisplay').innerText = total.toFixed(2);
     }
 
+    function increaseQty(idx) {
+        let item = cart[idx];
+        if (item.qty < item.stock) item.qty++;
+        else alert("Only " + item.stock + " " + item.name + " in stock.");
+        renderCart();
+    }
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
     function processSale(method) {
+        if (cart.length === 0) return alert("Cart is empty");
         let name = document.getElementById('customerName').value.trim() || 'Walk-in Guest';
         let total = cart.reduce((s,i)=>s+(i.price*i.qty),0);
         let fd = new FormData();
@@ -647,12 +651,13 @@ if (!$history_result) {
         fd.append('customer_name', name);
         fd.append('items_json', JSON.stringify(cart));
         fetch('sales.php', {method:'POST', body:fd}).then(res=>res.text()).then(res => {
-            if(res.res.trim() === 'success') { 
-                alert("Sale completed!"); 
+            if (res.trim() === 'success') {
+                alert("Sale completed!");
                 setTimeout(() => location.reload(), 500);
             }
-            else alert("Error processing sale.");
-        });
+            else alert(res.trim() || "Error processing sale.");
+        })
+        .catch(() => alert("Error processing sale. Please try again."));
     }
     renderCart();
 </script>

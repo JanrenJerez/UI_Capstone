@@ -1,7 +1,7 @@
 <?php
-session_start();
-date_default_timezone_set('Asia/Manila');
 require_once __DIR__ . '/includes/db.php';
+require_once __DIR__ . '/includes/auth.php';
+require_unlocked();
 
 if (isset($_POST['delete_transaction_id'])) {
     $delId = intval($_POST['delete_transaction_id']);
@@ -9,9 +9,10 @@ if (isset($_POST['delete_transaction_id'])) {
     
     if ($delSource === 'POS') {
         $pdo->prepare("DELETE FROM sale_items WHERE sale_id = ?")->execute([$delId]);
+        $pdo->prepare("DELETE FROM walkin_visits WHERE sale_id = ?")->execute([$delId]);
         $pdo->prepare("DELETE FROM sales WHERE id = ?")->execute([$delId]);
     } else {
-        $pdo->prepare("DELETE FROM members WHERE id = ?")->execute([$delId]);
+        delete_member($pdo, $delId);
     }
     header("Location: " . $_SERVER['PHP_SELF']);
     exit();
@@ -37,6 +38,9 @@ $activePercentage = 0;
 $expiredPercentage = 0;
 $todayDayPasses = 0;
 $history_rows = [];
+$historyTotal = 0;
+$perPage = 25;
+$page = 1;
 
 $filter = $_GET['history_filter'] ?? 'today';
 $dateConditionSales = "";
@@ -54,8 +58,11 @@ try {
     $stmtMembers = $pdo->query("SELECT COUNT(*) FROM members");
     if ($stmtMembers) $totalMembers = $stmtMembers->fetchColumn();
 
-    $stmtAttendance = $pdo->query("SELECT COUNT(*) FROM attendance WHERE DATE(scan_time) = DATE('now', 'localtime')");
-    if ($stmtAttendance) $todayAttendance = $stmtAttendance->fetchColumn();
+    // Member check-ins plus walk-in day pass visits
+    $todayAttendance = $pdo->query("
+        SELECT (SELECT COUNT(*) FROM attendance WHERE DATE(scan_time) = DATE('now', 'localtime'))
+             + (SELECT COUNT(*) FROM walkin_visits WHERE DATE(visit_time) = DATE('now', 'localtime'))
+    ")->fetchColumn();
 
     $stmtSalesCount = $pdo->query("SELECT COUNT(*) FROM sales WHERE status = 'Paid'");
     if ($stmtSalesCount) $totalSalesCount = $stmtSalesCount->fetchColumn();
@@ -103,38 +110,12 @@ try {
     ");
     if ($stmtTodayDayPasses) $todayDayPasses = $stmtTodayDayPasses->fetchColumn();
 
-    // Updated history query using DATE() to remove time
-    $history_query = "
-        SELECT 
-            s.id AS transaction_id, 
-            'POS' AS source_type,
-            s.customer_name, 
-            DATE(s.sale_date) AS date_recorded, 
-            GROUP_CONCAT(COALESCE(p.name, 'Day Pass') || ' (' || si.qty || ')') AS items_list,
-            s.amount, 
-            s.payment_method, 
-            s.status
-        FROM sales s 
-        LEFT JOIN sale_items si ON s.id = si.sale_id 
-        LEFT JOIN products p ON si.product_id = p.id
-        WHERE 1=1 $dateConditionSales
-        GROUP BY s.id 
-        UNION ALL
-        SELECT 
-            m.id AS transaction_id, 
-            'MEMBERSHIP' AS source_type,
-            COALESCE(m.name, 'Gym Member') AS customer_name, 
-            DATE(m.created_at) AS date_recorded, 
-            'Gym Membership (' || COALESCE(m.membership_type, 'Standard') || ')' AS items_list,
-            m.final_rate AS amount, 
-            'Cash' AS payment_method, 
-            'Paid' AS status
-        FROM members m
-        WHERE 1=1 $dateConditionMembers
-        ORDER BY date_recorded DESC";
-
-    $stmtHistory = $pdo->query($history_query);
-    if ($stmtHistory) $history_rows = $stmtHistory->fetchAll(PDO::FETCH_ASSOC);
+    $perPage = 25;
+    $page = current_page();
+    $historySql = sales_history_sql($dateConditionSales, $dateConditionMembers);
+    $historyTotal = (int) $pdo->query("SELECT COUNT(*) FROM ($historySql)")->fetchColumn();
+    $offset = ($page - 1) * $perPage;
+    $history_rows = $pdo->query("$historySql ORDER BY date_recorded DESC LIMIT $perPage OFFSET $offset")->fetchAll(PDO::FETCH_ASSOC);
 
 } catch (PDOException $e) {
     error_log("Dashboard Error: " . $e->getMessage());
@@ -151,7 +132,7 @@ try {
         * { box-sizing: border-box; }
         body {
             background: #0a0a0a; color: #ffffff; font-family: 'Segoe UI', sans-serif; margin: 0;
-            background-image: linear-gradient(rgba(10, 10, 10, 0.88), rgba(10, 10, 10, 0.1)), url('../assets/gym.jpg');
+            background-image: linear-gradient(rgba(10, 10, 10, 0.88), rgba(10, 10, 10, 0.1)), url('/assets/gym.jpg');
             background-attachment: fixed; background-size: cover; background-position: center;
         }
         .container { max-width: 1100px; margin: 0 auto; padding: 50px 20px 30px; }
@@ -204,6 +185,13 @@ try {
         .filter-btn.active { background: #dc2626; color: white; border-color: #dc2626; }
         .btn-action-edit { background: #2563eb; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-right: 4px; display: inline-block; }
         .btn-action-del { background: #dc2626; color: white; padding: 5px 10px; border-radius: 4px; border: none; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+        @media (max-width: 800px) {
+            .container { padding: 30px 14px 20px; }
+            .dashboard-title { font-size: 1.5rem; }
+            .scanner-grid { grid-template-columns: 1fr; }
+            .analysis-grid { grid-template-columns: 1fr; }
+            .glass-card { padding: 18px; }
+        }
     </style>
 </head>
 <body>
@@ -240,11 +228,11 @@ try {
                 <h3>Quick Links</h3>
                 <p style="color: #a3a3a3; font-size: 0.9rem; margin-bottom: 20px;">Manage finances, active user passes, or register members.</p>
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <a href="../pos/expenses.php" style="padding: 10px 18px; background: #eab308; color: #000; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem;">💸 Manage Expenses</a>
-                    <a href="../admin/Manage.php" style="padding: 10px 18px; background: #ff0000; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem;">👨 Manage Members</a>
-                    <a href="../pos/sales.php" style="padding: 10px 18px; background: #fa0000; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem;">💲Point of Sales</a>
+                    <a href="/pos/expenses.php" style="padding: 10px 18px; background: #eab308; color: #000; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem;">💸 Manage Expenses</a>
+                    <a href="/admin/manage.php" style="padding: 10px 18px; background: #ff0000; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem;">👨 Manage Members</a>
+                    <a href="/pos/sales.php" style="padding: 10px 18px; background: #fa0000; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem;">💲Point of Sales</a>
                     <button type="button" onclick="openModal('walkInModal')" style="padding: 10px 18px; background: #16a34a; color: #fff; border: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem; cursor: pointer;">⚡ Walk-In Day Pass</button>
-                    <button type="button" onclick="openModal('pinModal')" style="padding: 10px 18px; background: #4b5563; color: #fff; border: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem; cursor: pointer;">🔒 Change PIN</button>
+                    <a href="/admin/settings.php" style="padding: 10px 18px; background: #4b5563; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.85rem;">🔒 Change PIN</a>
                 </div>
             </div>
         </div>
@@ -280,8 +268,7 @@ try {
                 <a href="?history_filter=all" class="filter-btn <?php echo ($filter === 'all') ? 'active' : ''; ?>">Overall</a>
             </div>
             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                <!-- Updated export link to use .xlsx -->
-                <a href="../pos/sales.php?export=xlsx" style="background: #2563eb; color: white; padding: 8px 14px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 0.85rem;">📊 Export Excel</a>
+                <a href="/pos/sales.php?export=csv" style="background: #2563eb; color: white; padding: 8px 14px; border-radius: 6px; text-decoration: none; font-weight: 700; font-size: 0.85rem;">📊 Export to Excel (CSV)</a>
                 <?php if (!empty($history_rows)): ?>
                     <form method="POST" onsubmit="return confirm('Are you sure you want to delete ALL POS sales history records?');" style="display:inline;">
                         <input type="hidden" name="delete_all_history" value="1">
@@ -321,9 +308,9 @@ try {
                                 <td style="color: #22c55e; font-weight: 600;"><?php echo htmlspecialchars($row['status']); ?></td>
                                 <td>
                                     <?php if (!$is_member_rec): ?>
-                                        <a href="../pos/sales.php?edit_sale=<?php echo $row['transaction_id']; ?>" class="btn-action-edit">Edit</a>
+                                        <a href="/pos/sales.php" class="btn-action-edit">Edit</a>
                                     <?php else: ?>
-                                        <a href="../admin/Manage.php" class="btn-action-edit" style="background:#4b5563;">Manage</a>
+                                        <a href="/admin/manage.php?q=<?php echo urlencode($row['customer_name']); ?>" class="btn-action-edit" style="background:#4b5563;">Manage</a>
                                     <?php endif; ?>
                                     <form method="POST" onsubmit="return confirm('Delete this record?');" style="display:inline;">
                                         <input type="hidden" name="delete_transaction_id" value="<?php echo $row['transaction_id']; ?>">
@@ -338,6 +325,7 @@ try {
                     <?php endif; ?>
                 </tbody>
             </table>
+            <?php echo render_pagination($historyTotal, $perPage, $page); ?>
         </div>
     </div>
 </div>
@@ -360,35 +348,10 @@ try {
         <h3 style="margin-top: 0;">Scan GCash QR Code</h3>
         <p style="color: #a3a3a3; font-size: 0.9rem;">Amount: <b style="color: #ef4444;">₱<span id="gcashAmount">0.00</span></b></p>
         <div style="background: white; padding: 15px; border-radius: 12px; display: inline-block; margin-bottom: 15px;">
-            <img src="../assets/gcash.jpg" style="width: 200px; height: 200px; object-fit: contain; display: block;">
+            <img src="/assets/gcash.jpg" style="width: 200px; height: 200px; object-fit: contain; display: block;">
         </div>
         <button class="btn-checkout" style="background:#007dfe;" onclick="confirmWalkInGcash()">Confirm Payment</button>
         <button type="button" onclick="closeModal('gcashModal')" style="width:100%; background:none; border:none; margin-top:10px; color:#737373; cursor:pointer;">Cancel</button>
-    </div>
-</div>
-
-<!-- CHANGE PIN MODAL -->
-<div id="pinModal" class="modal">
-    <div class="modal-content">
-        <h3 style="margin-top:0; color:#dc2626; text-align: left;">Change App PIN</h3>
-        <label>Current PIN</label>
-        <input type="password" id="oldPinInput" maxlength="4" placeholder="••••">
-        <label>New 4-Digit PIN</label>
-        <input type="password" id="newPinInput" maxlength="4" placeholder="••••">
-        <button class="btn-checkout" style="background:#dc2626;" onclick="updatePin()">Save New PIN</button>
-        <p id="pinError" style="color: #ef4444; font-size: 0.75rem; margin-top: 10px; display: none;"></p>
-        <button type="button" onclick="closeModal('pinModal')" style="width:100%; background:none; border:none; margin-top:10px; color:#737373; cursor:pointer;">Cancel</button>
-    </div>
-</div>
-
-<!-- APP LOCK SCREEN OVERLAY -->
-<div id="appLockScreen" style="display: none; position: fixed; inset: 0; background: #0a0a0a; z-index: 99999; justify-content: center; align-items: center; font-family: 'Segoe UI', sans-serif;">
-    <div style="background: #141414; padding: 30px; border-radius: 16px; border: 1px solid #262626; text-align: center; width: 320px;">
-        <h2 style="color: #dc2626; margin-top: 0; text-transform: uppercase; font-size: 1.2rem;">App Locked</h2>
-        <p style="color: #a3a3a3; font-size: 0.85rem; margin-bottom: 20px;">Enter your 4-digit PIN to unlock</p>
-        <input type="password" id="lockPinInput" maxlength="4" placeholder="••••" style="width: 100%; padding: 12px; font-size: 1.5rem; text-align: center; background: #0a0a0a; border: 1px solid #262626; border-radius: 8px; color: white; letter-spacing: 8px; margin-bottom: 15px;">
-        <button onclick="verifyPin()" style="width: 100%; padding: 12px; background: #dc2626; border: none; border-radius: 8px; color: white; font-weight: bold; cursor: pointer; text-transform: uppercase;">Unlock</button>
-        <p id="lockError" style="color: #ef4444; font-size: 0.75rem; margin-top: 10px; display: none;">Incorrect PIN. Try again.</p>
     </div>
 </div>
 
@@ -423,17 +386,19 @@ try {
         formData.append('payment_method', paymentMethod);
         formData.append('customer_name', customerName + ' (Day Pass)');
         formData.append('items_json', JSON.stringify(dayPassItem));
+        formData.append('day_pass', '1');
 
-        fetch('../pos/sales.php', { method: 'POST', body: formData })
+        fetch('/pos/sales.php', { method: 'POST', body: formData })
         .then(res => res.text())
         .then(data => {
-            alert("Day Pass (" + calculatedQty + "x) transaction processed successfully via " + paymentMethod + "!");
-            window.location.href = window.location.pathname;
+            if (data.trim() === 'success') {
+                alert("Day Pass (" + calculatedQty + "x) transaction processed successfully via " + paymentMethod + "!");
+                window.location.href = window.location.pathname;
+            } else {
+                alert(data.trim() || "Transaction failed.");
+            }
         })
-        .catch(err => {
-            alert("Transaction completed. Refreshing page...");
-            window.location.href = window.location.pathname;
-        });
+        .catch(() => alert("Transaction failed. Please try again."));
     }
 
     const resultDiv = document.getElementById('result');
@@ -476,7 +441,7 @@ try {
         let formData = new FormData();
         formData.append('qr_id', decodedText);
 
-        fetch('check_member.php', { method: 'POST', body: formData })
+        fetch('/pos/check_member.php', { method: 'POST', body: formData })
         .then(res => res.json())
         .then(data => {
             if (data.status === "success") {
@@ -504,86 +469,12 @@ try {
         if (historyContainer.innerText.includes("No scans")) historyContainer.innerHTML = "";
         let entry = document.createElement('div');
         entry.className = 'scan-item';
-        entry.innerHTML = `<span>${name}</span><span>${time}</span>`;
+        const nameEl = document.createElement('span'); nameEl.textContent = name;
+        const timeEl = document.createElement('span'); timeEl.textContent = time;
+        entry.append(nameEl, timeEl);
         historyContainer.insertBefore(entry, historyContainer.firstChild);
     }
 
-    // --- LOCK SCREEN & INACTIVITY LOGIC ---
-    let inactivityTimer;
-    const TIMEOUT_LIMIT = 5 * 60 * 1000; // 5 minutes inactivity limit
-
-    function getStoredPin() {
-        return localStorage.getItem('appLockPin') || "1234";
-    }
-
-    function showLockScreen() {
-        document.getElementById('appLockScreen').style.display = 'flex';
-    }
-
-    function hideLockScreen() {
-        document.getElementById('appLockScreen').style.display = 'none';
-        document.getElementById('lockPinInput').value = '';
-        document.getElementById('lockError').style.display = 'none';
-        resetInactivityTimer();
-    }
-
-    function verifyPin() {
-        const enteredPin = document.getElementById('lockPinInput').value;
-        if (enteredPin === getStoredPin()) {
-            sessionStorage.setItem('isAppUnlocked', 'true');
-            hideLockScreen();
-        } else {
-            document.getElementById('lockError').style.display = 'block';
-        }
-    }
-
-    function updatePin() {
-        const oldPin = document.getElementById('oldPinInput').value;
-        const newPin = document.getElementById('newPinInput').value;
-        const errorEl = document.getElementById('pinError');
-
-        if (oldPin !== getStoredPin()) {
-            errorEl.innerText = "Incorrect current PIN.";
-            errorEl.style.display = 'block';
-            return;
-        }
-
-        if (newPin.length !== 4 || isNaN(newPin)) {
-            errorEl.innerText = "New PIN must be exactly 4 digits.";
-            errorEl.style.display = 'block';
-            return;
-        }
-
-        localStorage.setItem('appLockPin', newPin);
-        alert("PIN updated successfully!");
-        document.getElementById('oldPinInput').value = '';
-        document.getElementById('newPinInput').value = '';
-        errorEl.style.display = 'none';
-        closeModal('pinModal');
-    }
-
-    function resetInactivityTimer() {
-        clearTimeout(inactivityTimer);
-        if (sessionStorage.getItem('isAppUnlocked') === 'true') {
-            inactivityTimer = setTimeout(() => {
-                sessionStorage.removeItem('isAppUnlocked');
-                showLockScreen();
-            }, TIMEOUT_LIMIT);
-        }
-    }
-
-    window.addEventListener('DOMContentLoaded', () => {
-        const isUnlocked = sessionStorage.getItem('isAppUnlocked');
-        if (isUnlocked !== 'true') {
-            showLockScreen();
-        } else {
-            resetInactivityTimer();
-        }
-    });
-
-    ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach(event => {
-        window.addEventListener(event, resetInactivityTimer);
-    });
 </script>
 </body>
 </html>

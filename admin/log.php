@@ -1,11 +1,7 @@
 <?php
-session_start();
 include __DIR__ . '/../includes/db.php';
-
-if (!isset($_SESSION['isAdminLoggedIn'])) {
-    header("Location: ../index.php");
-    exit();
-}
+require_once __DIR__ . '/../includes/auth.php';
+require_unlocked();
 
 $id = $_GET['id'] ?? null;
 if (!$id) {
@@ -22,7 +18,8 @@ try {
     $member = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$member) {
-        die("Member not found.");
+        header("Location: manage.php");
+        exit();
     }
 
     if ($_SERVER["REQUEST_METHOD"] === "POST") {
@@ -45,7 +42,7 @@ try {
 
             $updateStmt = $conn->prepare("
                 UPDATE members 
-                SET name = ?, contact = ?, address = ?, expiry_date = ?, tier = ?, base_rate = ?, discount_amount = ?, final_rate = ?
+                SET name = ?, contact = ?, address = ?, expiry_date = ?, tier = ?, membership_type = ?, base_rate = ?, discount_amount = ?, final_rate = ?
                 WHERE id = ?
             ");
 
@@ -54,6 +51,7 @@ try {
                 $contact,
                 $address,
                 $expiry,
+                $tier,
                 $tier,
                 $baseRate,
                 $discountAmount,
@@ -73,7 +71,8 @@ try {
         }
     }
 } catch (PDOException $e) {
-    $error = "Database error: " . $e->getMessage();
+    error_log("Member edit failed: " . $e->getMessage());
+    $error = "Could not save the member. Please try again.";
 }
 ?>
 
@@ -94,7 +93,7 @@ try {
             margin: 0;
             background-image:
                 linear-gradient(rgba(10, 10, 10, 0.92), rgba(10, 10, 10, 0.92)),
-                url('assets/gym.jpg');
+                url('/assets/gym.jpg');
             background-repeat: no-repeat;
             background-attachment: fixed;
             background-size: cover;
@@ -335,14 +334,16 @@ try {
         <h2 class="form-title">Edit Member Profile</h2>
 
         <?php if ($success): ?>
-            <div class="success-msg">Member record updated successfully!</div>
+            <div class="success-msg">Member record updated successfully!
+                <a href="/member_profile.php?id=<?php echo urlencode($id); ?>" style="color:#86efac; display:block; margin-top:6px;">🖨 View / reprint QR card →</a>
+            </div>
         <?php endif; ?>
 
         <?php if (!empty($error)): ?>
             <div class="error-message"><?php echo htmlspecialchars($error); ?></div>
         <?php endif; ?>
 
-        <form method="POST" action="edit_member.php?id=<?php echo urlencode($id); ?>">
+        <form method="POST" action="log.php?id=<?php echo urlencode($id); ?>">
 
             <div class="form-group">
                 <label for="memberName">Full Name</label>
@@ -432,7 +433,8 @@ try {
             <button type="submit" class="btn-primary" style="margin-top: 15px;">
                 Save Changes
             </button>
-            <a href="members.php" class="btn-secondary">Back to Members List</a>
+            <a href="/member_profile.php?id=<?php echo urlencode($id); ?>" class="btn-secondary">Back to Member Profile</a>
+            <a href="manage.php" class="btn-secondary">Back to Members List</a>
 
         </form>
 
